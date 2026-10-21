@@ -1,0 +1,38 @@
+{
+    "1551703358568665189": {
+        "ativo": true,
+        "plataformas": [
+            "tiktok",
+            "instagram"
+        ],
+        "modo": "canal"
+    },
+    "1525926262881910844": {
+        "ativo": true,
+        "plataformas": [
+            "tiktok",
+            "instagram"
+        ],
+        "modo": "canal"
+    },
+    "1518248087452127253": {
+        "plataformas": [
+            "tiktok",
+            "instagram"
+        ],
+        "canal": "1525926262881910844",
+        "canais": [
+            "1525926262881910844"
+        ]
+    },
+    "1547613418012414076": {
+        "plataformas": [
+            "tiktok",
+            "instagram"
+        ],
+        "canal": "1552479591006871602",
+        "canais": [
+            "1552479591006871602"
+        ]
+    }
+}

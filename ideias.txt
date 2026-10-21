@@ -1,0 +1,114 @@
+# Ideias de comandos para o Zyrenn Bot
+
+Ideias baseadas nos recursos que o bot ja tem: AFK, ajuda, sugestoes,
+chat com IA e memoria, moderacao, autolink, musica e comandos de edicao.
+Os comandos abaixo sao propostas; confira se algum ja existe antes de
+implementar ou sincronizar novos comandos.
+
+## Moderacao e seguranca
+
+- `/historico @membro` — mostra avisos e acoes de moderacao registrados.
+- `/avisos @membro` — consulta os avisos ativos de uma pessoa.
+- `/remover_aviso @membro id` — remove um aviso, com permissao da equipe.
+- `/slowmode tempo` — configura o intervalo entre mensagens no canal.
+- `/lock_temporizado tempo` — tranca o canal e destranca automaticamente.
+- `/limpar_usuario @membro quantidade` — apaga mensagens recentes de uma pessoa.
+- `/limpar_bots quantidade` — remove mensagens enviadas por bots no canal.
+- `/limpar_links quantidade` — apaga mensagens com links, com confirmacao.
+- `/configurar_autolink` — abre um painel para escolher canais e regras do autolink.
+- `/pausar_autolink` — pausa temporariamente a deteccao automatica de links.
+- `/relatorio_mod` — resume as acoes de moderacao recentes do servidor.
+- `/destrancar_todos` — reabre os canais trancados pelo bot, com confirmacao.
+
+## IA e texto
+
+- `/resumir texto` — cria um resumo curto de uma mensagem ou texto.
+- `/resumir_conversa quantidade` — resume as mensagens recentes do canal.
+- `/resumir_transcricao` — resume uma transcricao gerada pelo bot.
+- `/traduzir idioma texto` — traduz um texto para o idioma escolhido.
+- `/corrigir texto` — corrige ortografia e melhora a clareza sem mudar o sentido.
+- `/reescrever estilo texto` — reescreve um texto em tom formal, casual ou criativo.
+- `/explicar texto` — explica uma mensagem ou trecho em linguagem simples.
+- `/ideias tema` — pede a IA uma lista de ideias sobre um tema.
+- `/perguntar_anexo arquivo pergunta` — permite fazer uma pergunta sobre um arquivo suportado.
+- `/memoria_ver` — mostra um resumo do que a memoria do chat guardou.
+- `/memoria_esquecer termo` — remove uma informacao especifica da memoria, se suportado.
+- `/chat_limpar` — limpa o contexto de conversa do usuario ou canal.
+
+## Musica e midia
+
+- `/fila` — mostra as proximas musicas e a posicao de cada uma.
+- `/tocando` — mostra a faixa atual, quem pediu e o tempo de reproducao.
+- `/volume nivel` — ajusta o volume do player.
+- `/remover_fila posicao` — remove uma faixa da fila.
+- `/limpar_fila` — limpa a fila com confirmacao.
+- `/repetir modo` — alterna entre repetir faixa, fila ou nao repetir.
+- `/embaralhar` — mistura a ordem das faixas da fila.
+- `/pausar` e `/continuar` — controles de musica por slash command.
+- `/buscar_musica consulta` — pesquisa opcoes antes de adicionar uma faixa.
+- `/clipe link` — baixa ou prepara um clipe, respeitando limites e formatos permitidos.
+
+## Utilidade e comunidade
+
+- `/lembrete tempo mensagem` — envia uma mensagem de lembrete depois do tempo escolhido.
+- `/enquete pergunta opcoes` — cria uma votacao com botoes e prazo configuravel.
+- `/sorteio premio duracao` — inicia um sorteio e escolhe um vencedor ao terminar.
+- `/contador nome meta` — cria um contador simples para o servidor.
+- `/aniversario data` — registra uma data e permite avisos de aniversario.
+- `/nivel @membro` — mostra nivel e progresso, caso o bot tenha sistema de XP.
+- `/rank` — lista os membros mais ativos, caso exista ou seja criado sistema de XP.
+- `/regras` — mostra as regras do servidor em uma mensagem organizada.
+- `/sugerir` — atalho para enviar sugestoes, com acompanhamento de status.
+- `/sugestoes_pendentes` — mostra sugestoes aguardando avaliacao da equipe.
+- `/votar_sugestao id voto` — registra apoio ou rejeicao a uma sugestao.
+- `/perfil @membro` — agrupa avatar, data de entrada e informacoes publicas.
+- `/cargo_temporario @membro cargo duracao` — atribui um cargo por tempo limitado.
+- `/lembrete_evento evento` — envia lembrete antes de um evento publicado pelo bot.
+
+## Eventos e interacao
+
+- `/evento_editar id` — atualiza horario, descricao ou local de um evento.
+- `/evento_cancelar id` — cancela um evento e avisa quem confirmou presenca.
+- `/evento_participar id` — confirma participacao em um evento.
+- `/eventos_proximos` — lista eventos em ordem de data.
+- `/quiz tema` — inicia um quiz com perguntas e pontuacao.
+- `/desafio pergunta` — publica um desafio para a comunidade.
+- `/ship @membro1 @membro2` — permite escolher as duas pessoas do ship.
+- `/8ball pergunta` — responde uma pergunta com a bola magica.
+- `/dado lados` — rola um dado com quantidade de lados configuravel.
+- `/caraoucoroa` — faz um sorteio de cara ou coroa com resultado visual.
+- `/batalha @membro` — inicia uma batalha amigavel com resultado aleatorio.
+
+## Edicao, arquivos e transcricao
+
+- `/transcrever idioma` — inicia uma transcricao com idioma selecionavel.
+- `/transcricao_salvar` — disponibiliza a transcricao em arquivo de texto.
+- `/transcricao_resumo` — gera um resumo depois da transcricao.
+- `/xml_validar arquivo` — verifica se um XML e valido e aponta erros.
+- `/xml_formatar arquivo` — organiza a indentacao de um XML.
+- `/benchmark_detalhes` — detalha os dados medidos pelo comando de benchmark.
+- `/converter_midia arquivo formato` — converte arquivos entre formatos suportados.
+- `/extrair_audio video` — extrai o audio de um video dentro dos limites configurados.
+- `/informacoes_arquivo arquivo` — mostra formato, duracao e tamanho de uma midia.
+- `/download_status` — informa o andamento de um download ou processamento.
+
+## Administracao e diagnostico
+
+- `/ping` — mostra latencia do bot e da API do Discord.
+- `/status` — mostra estado de conexao, memoria e servicos principais.
+- `/serverinfo` — exibe dados e estatisticas do servidor.
+- `/userinfo @membro` — mostra informacoes publicas de um membro.
+- `/logs_configurar canal` — escolhe onde enviar logs do bot.
+- `/logs_teste` — envia um evento de teste para verificar a configuracao de logs.
+- `/permissoes comando` — explica quais permissoes um comando exige.
+- `/configuracoes` — abre um painel com as configuracoes do bot no servidor.
+- `/backup_config` — exporta configuracoes do bot, sem incluir tokens ou segredos.
+- `/ajuda_buscar termo` — encontra comandos por nome ou descricao.
+
+## Boas primeiras implementacoes
+
+1. `/fila` e `/tocando` — complementam os controles de musica existentes.
+2. `/historico` — torna os avisos e a moderacao mais faceis de acompanhar.
+3. `/lembrete` — utilidade simples para qualquer comunidade.
+4. `/enquete` — recurso de interacao rapido e facil de usar.
+5. `/resumir_transcricao` — aproveita os recursos atuais de transcricao e IA.

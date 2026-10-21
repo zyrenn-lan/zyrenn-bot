@@ -1,0 +1,762 @@
+import asyncio
+import discord
+from discord.ext import commands
+from discord import app_commands
+
+import aiohttp
+import yt_dlp
+import json
+import mimetypes
+import os
+import re
+import shutil
+import uuid
+from pathlib import Path
+
+
+# =========================================================
+# ULTRA TURBO + ZYRENN VIDEOS
+# =========================================================
+
+CONFIG_FILE = "autolink.json"
+PASTA = Path("autolink_downloads")
+LIMITE_BYTES = 24 * 1024 * 1024
+
+MAX_DOWNLOADS = 4
+MAX_UPLOADS = 2
+
+ZYRENN_VIDEOS_URL = os.getenv(
+    "ZYRENN_VIDEOS_URL",
+    "https://zyrenn-videos--daviikkjz.replit.app",
+).rstrip("/")
+
+ZYRENN_VIDEOS_TOKEN = os.getenv("ZYRENN_VIDEOS_TOKEN")
+
+PASTA.mkdir(parents=True, exist_ok=True)
+
+TIKTOK_REGEX = re.compile(
+    r"https?://(?:www\.)?(?:tiktok\.com|vm\.tiktok\.com|"
+    r"vt\.tiktok\.com|tt\.site)/[^\s<>]+",
+    re.I,
+)
+
+INSTAGRAM_REGEX = re.compile(
+    r"https?://(?:www\.)?instagram\.com/"
+    r"(?:reel|reels|p)/[^\s<>]+",
+    re.I,
+)
+
+
+# =========================================================
+# CONFIGURAÇÃO
+# =========================================================
+
+def carregar_config():
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            dados = json.load(f)
+            return dados if isinstance(dados, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception as erro:
+        print(f"[AutoLink] Config: {erro}")
+        return {}
+
+
+def salvar_config(config):
+    temporario = CONFIG_FILE + ".tmp"
+
+    try:
+        with open(temporario, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+
+        os.replace(temporario, CONFIG_FILE)
+
+    except Exception as erro:
+        print(f"[AutoLink] Salvamento: {erro}")
+
+        try:
+            os.remove(temporario)
+        except OSError:
+            pass
+
+
+# =========================================================
+# PERMISSÕES
+# =========================================================
+
+def is_admin():
+    async def predicate(interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "❌ Use esse comando dentro de um servidor.",
+                ephemeral=True,
+            )
+            return False
+
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ Você precisa ser administrador.",
+                ephemeral=True,
+            )
+            return False
+
+        return True
+
+    return app_commands.check(predicate)
+
+
+# =========================================================
+# FFMPEG
+# =========================================================
+
+def localizar_ffmpeg():
+    encontrado = shutil.which("ffmpeg")
+
+    if encontrado:
+        return encontrado
+
+    possiveis = [
+        r"C:\ffmpeg\bin\ffmpeg.exe",
+        r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+    ]
+
+    for caminho in possiveis:
+        if os.path.isfile(caminho):
+            return caminho
+
+    return None
+
+
+# =========================================================
+# DOWNLOAD TURBO
+# =========================================================
+
+async def baixar_video(url):
+    identificador = uuid.uuid4().hex
+    modelo = str(PASTA / f"{identificador}_%(id)s.%(ext)s")
+
+    ffmpeg = localizar_ffmpeg()
+
+    opcoes = {
+        "format": "b[ext=mp4]/b",
+        "outtmpl": modelo,
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "cachedir": False,
+        "restrictfilenames": True,
+
+        "socket_timeout": 12,
+        "retries": 1,
+        "fragment_retries": 1,
+        "extractor_retries": 1,
+        "file_access_retries": 1,
+
+        "concurrent_fragment_downloads": 16,
+
+        "writesubtitles": False,
+        "writeautomaticsub": False,
+        "writethumbnail": False,
+        "writeinfojson": False,
+    }
+
+    if ffmpeg:
+        opcoes["ffmpeg_location"] = ffmpeg
+
+    loop = asyncio.get_running_loop()
+
+    def executar():
+        with yt_dlp.YoutubeDL(opcoes) as ydl:
+            info = ydl.extract_info(url, download=True)
+
+            arquivos = [
+                p for p in PASTA.glob(identificador + "_*")
+                if p.is_file()
+                and not p.name.endswith(
+                    (".part", ".ytdl", ".json")
+                )
+            ]
+
+            if not arquivos:
+                raise FileNotFoundError(
+                    "O download não gerou um arquivo."
+                )
+
+            arquivos.sort(
+                key=lambda p: (
+                    p.suffix.lower() == ".mp4",
+                    p.stat().st_size,
+                ),
+                reverse=True,
+            )
+
+            return info, str(arquivos[0])
+
+    try:
+        return await loop.run_in_executor(None, executar)
+
+    except Exception:
+        for p in PASTA.glob(identificador + "_*"):
+            try:
+                if p.is_file():
+                    p.unlink()
+            except OSError:
+                pass
+
+        raise
+
+
+# =========================================================
+# UPLOAD PARA O ZYRENN VIDEOS
+# =========================================================
+
+async def enviar_para_zyrenn(arquivo):
+    if not ZYRENN_VIDEOS_TOKEN:
+        raise RuntimeError(
+            "Configure ZYRENN_VIDEOS_TOKEN no arquivo .env."
+        )
+
+    caminho = Path(arquivo)
+
+    if not caminho.is_file():
+        raise FileNotFoundError(
+            "O arquivo do vídeo não foi encontrado."
+        )
+
+    tamanho = caminho.stat().st_size
+
+    if tamanho <= 0:
+        raise ValueError("O vídeo está vazio.")
+
+    if tamanho > LIMITE_BYTES:
+        raise ValueError(
+            "O vídeo ultrapassa o limite de 24 MB."
+        )
+
+    content_type = (
+        mimetypes.guess_type(caminho.name)[0]
+        or "application/octet-stream"
+    )
+
+    timeout = aiohttp.ClientTimeout(
+        total=300,
+        connect=30,
+        sock_read=120,
+    )
+
+    # O servidor FastAPI espera o campo multipart "file"
+    # e a autenticação no formato Authorization: Bearer TOKEN.
+    with caminho.open("rb") as video:
+        formulario = aiohttp.FormData()
+
+        formulario.add_field(
+            "file",
+            video,
+            filename=caminho.name,
+            content_type=content_type,
+        )
+
+        async with aiohttp.ClientSession(
+            timeout=timeout
+        ) as session:
+
+            async with session.post(
+                f"{ZYRENN_VIDEOS_URL}/upload",
+                data=formulario,
+                headers={
+                    "Authorization": (
+                        f"Bearer {ZYRENN_VIDEOS_TOKEN}"
+                    )
+                },
+            ) as resposta:
+
+                if resposta.status != 201:
+                    detalhe = await resposta.text()
+
+                    raise RuntimeError(
+                        f"Servidor respondeu HTTP "
+                        f"{resposta.status}: {detalhe[:500]}"
+                    )
+
+                dados = await resposta.json()
+
+    url_publica = dados.get("url")
+
+    if not isinstance(url_publica, str) or not url_publica:
+        raise RuntimeError(
+            "O servidor não retornou um link público válido."
+        )
+
+    # A página de compartilhamento deste servidor só aceita MP4.
+    # Para outros formatos, usamos a rota pública do vídeo.
+    if caminho.suffix.lower() != ".mp4":
+        if "/share/" in url_publica:
+            url_publica = url_publica.replace(
+                "/share/",
+                "/videos/",
+                1,
+            )
+        else:
+            raise RuntimeError(
+                "O servidor retornou um link de compartilhamento "
+                "inesperado para esse formato."
+            )
+
+    print(
+        f"[AutoLink] Vídeo enviado: "
+        f"{dados.get('id', 'sem ID')} "
+        f"({dados.get('size_bytes', tamanho)} bytes)"
+    )
+
+    return url_publica
+
+
+# =========================================================
+# FORMATAÇÃO
+# =========================================================
+
+def formatar_numero(valor):
+    try:
+        valor = int(valor or 0)
+
+        if valor >= 1_000_000:
+            return f"{valor / 1_000_000:.1f}M"
+
+        if valor >= 1_000:
+            return f"{valor / 1_000:.1f}K"
+
+        return str(valor)
+
+    except (ValueError, TypeError, OverflowError):
+        return "0"
+
+
+# =========================================================
+# BOTÕES DOS LINKS
+# =========================================================
+
+class AutoLinkLinkView(discord.ui.View):
+    def __init__(self, url_original, url_publica):
+        super().__init__(timeout=None)
+
+        if (
+            "tiktok" in url_original.lower()
+            or "tt.site" in url_original.lower()
+        ):
+            texto_original = "🎵 Abrir TikTok"
+        else:
+            texto_original = "📸 Abrir Instagram"
+
+        self.add_item(
+            discord.ui.Button(
+                label="▶️ Assistir vídeo",
+                url=url_publica,
+                style=discord.ButtonStyle.link,
+            )
+        )
+
+        self.add_item(
+            discord.ui.Button(
+                label=texto_original,
+                url=url_original,
+                style=discord.ButtonStyle.link,
+            )
+        )
+
+
+# =========================================================
+# COG
+# =========================================================
+
+class AutoLink(commands.Cog):
+    autolink_group = app_commands.Group(
+        name="autolink",
+        description="Configure o sistema automático de vídeos.",
+    )
+
+    def __init__(self, bot):
+        self.bot = bot
+        self.config = carregar_config()
+
+        self.semaforo_download = asyncio.Semaphore(
+            MAX_DOWNLOADS
+        )
+
+        self.semaforo_upload = asyncio.Semaphore(
+            MAX_UPLOADS
+        )
+
+    # =====================================================
+    # PAINEL
+    # =====================================================
+
+    @autolink_group.command(
+        name="painel",
+        description="Abre o painel do AutoLink.",
+    )
+    @is_admin()
+    async def painel(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="⚙️ AutoLink ULTRA TURBO",
+            description=(
+                "Configure o sistema automático de vídeos.\n\n"
+                "🎵 TikTok\n"
+                "📸 Instagram\n\n"
+                "Selecione as plataformas e o canal abaixo."
+            ),
+            color=discord.Color.from_rgb(106, 0, 255),
+        )
+
+        embed.set_footer(text="Zyrenn Bot • AutoLink")
+
+        await interaction.response.send_message(
+            embed=embed,
+            view=AutoLinkView(
+                self,
+                str(interaction.guild.id),
+            ),
+            ephemeral=True,
+        )
+
+    # =====================================================
+    # DESATIVAR
+    # =====================================================
+
+    @autolink_group.command(
+        name="off",
+        description="Desativa o AutoLink.",
+    )
+    @is_admin()
+    async def off(self, interaction: discord.Interaction):
+        self.config.pop(
+            str(interaction.guild.id),
+            None,
+        )
+
+        salvar_config(self.config)
+
+        await interaction.response.send_message(
+            "✅ AutoLink desativado.",
+            ephemeral=True,
+        )
+
+    # =====================================================
+    # DETECTOR
+    # =====================================================
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.author.bot or not message.guild:
+            return
+
+        config = self.config.get(str(message.guild.id))
+
+        if not config:
+            return
+
+        canais = config.get("canais", [])
+
+        if canais:
+            if str(message.channel.id) not in canais:
+                return
+
+        elif config.get("canal"):
+            if (
+                str(message.channel.id)
+                != str(config["canal"])
+            ):
+                return
+
+        else:
+            return
+
+        match = TIKTOK_REGEX.search(message.content)
+        plataforma = "tiktok"
+
+        if not match:
+            match = INSTAGRAM_REGEX.search(message.content)
+            plataforma = "instagram"
+
+        if not match:
+            return
+
+        url = match.group(0).rstrip(".,!?;:)")
+
+        plataformas = config.get(
+            "plataformas",
+            ["tiktok", "instagram"],
+        )
+
+        if plataforma not in plataformas:
+            return
+
+        try:
+            await message.add_reaction("⬇️")
+        except discord.HTTPException:
+            pass
+
+        arquivo = None
+
+        try:
+            # Baixa sem bloquear o event loop do Discord.
+            async with self.semaforo_download:
+                info, arquivo = await baixar_video(url)
+
+            if not arquivo or not os.path.isfile(arquivo):
+                raise FileNotFoundError(
+                    "Arquivo do vídeo não encontrado."
+                )
+
+            tamanho = os.path.getsize(arquivo)
+
+            if tamanho > LIMITE_BYTES:
+                await message.channel.send(
+                    f"❌ Vídeo acima do limite de 24 MB "
+                    f"({tamanho / 1024 / 1024:.1f} MB)."
+                )
+                return
+
+            titulo = str(
+                info.get("title") or "Vídeo"
+            )
+
+            criador = str(
+                info.get("uploader")
+                or info.get("channel")
+                or "Desconhecido"
+            )
+
+            username = str(
+                info.get("uploader_id") or ""
+            )
+
+            informacoes = (
+                f"**{titulo[:150]}**\n"
+                f"👤 {criador[:100]}"
+            )
+
+            if username:
+                informacoes += (
+                    f" • `@{username[:50]}`"
+                )
+
+            informacoes += (
+                f"\n👁️ {formatar_numero(info.get('view_count'))}"
+                f"   ❤️ {formatar_numero(info.get('like_count'))}"
+                f"   💬 {formatar_numero(info.get('comment_count'))}"
+            )
+
+            # Envia o arquivo ao servidor público.
+            # O Discord recebe apenas o link, não o anexo.
+            async with self.semaforo_upload:
+                url_publica = await enviar_para_zyrenn(
+                    arquivo
+                )
+
+                await message.channel.send(
+                    content=(
+                        f"{informacoes}\n"
+                        f"[Assistir em zyrenn.gg]({url_publica})"
+                    ),
+                    view=AutoLinkLinkView(
+                        url,
+                        url_publica,
+                    ),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+
+            try:
+                await message.remove_reaction(
+                    "⬇️",
+                    self.bot.user,
+                )
+            except discord.HTTPException:
+                pass
+
+            try:
+                await message.add_reaction("✅")
+            except discord.HTTPException:
+                pass
+
+        except Exception as erro:
+            print(
+                f"[AutoLink] "
+                f"{type(erro).__name__}: {erro}"
+            )
+
+            try:
+                await message.remove_reaction(
+                    "⬇️",
+                    self.bot.user,
+                )
+
+                await message.add_reaction("❌")
+
+            except discord.HTTPException:
+                pass
+
+            mensagem_erro = (
+                "❌ Não consegui processar esse vídeo."
+            )
+
+            if isinstance(erro, RuntimeError):
+                if (
+                    "ZYRENN_VIDEOS_TOKEN" in str(erro)
+                    or "Servidor respondeu HTTP" in str(erro)
+                ):
+                    mensagem_erro = (
+                        "❌ Falha ao enviar o vídeo ao "
+                        "Zyrenn Videos. Verifica a configuração "
+                        "do servidor e os logs do bot."
+                    )
+
+            try:
+                await message.channel.send(
+                    mensagem_erro,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            except discord.HTTPException:
+                pass
+
+        finally:
+            if arquivo and os.path.isfile(arquivo):
+                try:
+                    os.remove(arquivo)
+                except OSError as erro:
+                    print(
+                        f"[AutoLink] Limpeza: {erro}"
+                    )
+
+
+# =========================================================
+# SELECT DE PLATAFORMAS
+# =========================================================
+
+class PlataformaSelect(discord.ui.Select):
+    def __init__(self, cog, guild_id):
+        self.cog = cog
+        self.guild_id = guild_id
+
+        super().__init__(
+            placeholder="Escolha as plataformas...",
+            options=[
+                discord.SelectOption(
+                    label="TikTok",
+                    value="tiktok",
+                    emoji="🎵",
+                ),
+                discord.SelectOption(
+                    label="Instagram",
+                    value="instagram",
+                    emoji="📸",
+                ),
+                discord.SelectOption(
+                    label="TikTok + Instagram",
+                    value="ambos",
+                    emoji="🌐",
+                ),
+            ],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ Apenas administradores.",
+                ephemeral=True,
+            )
+            return
+
+        escolha = self.values[0]
+
+        plataformas = (
+            ["tiktok", "instagram"]
+            if escolha == "ambos"
+            else [escolha]
+        )
+
+        config = self.cog.config.setdefault(
+            self.guild_id,
+            {},
+        )
+
+        config["plataformas"] = plataformas
+
+        salvar_config(self.cog.config)
+
+        await interaction.response.send_message(
+            "✅ Plataformas configuradas!",
+            ephemeral=True,
+        )
+
+
+# =========================================================
+# SELECT DE CANAL
+# =========================================================
+
+class CanalSelect(discord.ui.ChannelSelect):
+    def __init__(self, cog, guild_id):
+        self.cog = cog
+        self.guild_id = guild_id
+
+        super().__init__(
+            placeholder="Escolha o canal...",
+            channel_types=[discord.ChannelType.text],
+            min_values=1,
+            max_values=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ Apenas administradores.",
+                ephemeral=True,
+            )
+            return
+
+        canal = self.values[0]
+
+        config = self.cog.config.setdefault(
+            self.guild_id,
+            {},
+        )
+
+        config["canal"] = str(canal.id)
+        config["canais"] = [str(canal.id)]
+
+        salvar_config(self.cog.config)
+
+        await interaction.response.send_message(
+            f"✅ AutoLink configurado em {canal.mention}.",
+            ephemeral=True,
+        )
+
+
+# =========================================================
+# VIEW DO PAINEL
+# =========================================================
+
+class AutoLinkView(discord.ui.View):
+    def __init__(self, cog, guild_id):
+        super().__init__(timeout=180)
+
+        self.add_item(
+            PlataformaSelect(cog, guild_id)
+        )
+
+        self.add_item(
+            CanalSelect(cog, guild_id)
+        )
+
+
+# =========================================================
+# SETUP
+# =========================================================
+
+async def setup(bot):
+    await bot.add_cog(AutoLink(bot))
+    print(
+        "Cog carregado: autolink.py "
+        "[ULTRA TURBO + ZYRENN VIDEOS]"
+    )
