@@ -2,15 +2,12 @@ import discord
 import aiohttp
 from discord.ext import commands
 from discord import app_commands
-from pathlib import Path
-from typing import Optional
 
 import yt_dlp
 
 import os
 import re
 import asyncio
-import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -19,6 +16,8 @@ import random
 import html
 import shutil
 import mimetypes
+from pathlib import Path
+from typing import Optional
 
 
 # =========================================================
@@ -27,7 +26,6 @@ import mimetypes
 
 DOWNLOADS_DIR = "downloads"
 
-# Caminho que você já estava usando
 FFMPEG_PATH = (
     r"C:\Users\User\AppData\Local\Microsoft\WinGet\Packages"
     r"\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe"
@@ -51,8 +49,6 @@ else:
 
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
-# Discord permite arquivos maiores dependendo do servidor,
-# mas usamos 19 MB para ficar mais seguro.
 LIMITE_DISCORD = 19 * 1024 * 1024
 
 # Zyrenn Videos: integração SOMENTE para comandos de vídeo.
@@ -115,17 +111,10 @@ URL_REGEX = re.compile(
     re.IGNORECASE
 )
 
-
-# Aceita:
-# https://open.spotify.com/track/...
-# https://open.spotify.com/intl-pt/track/...
-# https://spotify.com/track/...
-# https://spotify.link/...
 SPOTIFY_REGEX = re.compile(
     r"https?://(?:(?:open\.)?spotify\.com|spotify\.link)/[^\s<>]+",
     re.IGNORECASE
 )
-
 
 YOUTUBE_REGEX = re.compile(
     r"https?://(?:www\.)?"
@@ -134,13 +123,11 @@ YOUTUBE_REGEX = re.compile(
     re.IGNORECASE
 )
 
-
 TIKTOK_REGEX = re.compile(
     r"https?://(?:www\.)?"
     r"(?:tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)/[^\s<>]+",
     re.IGNORECASE
 )
-
 
 INSTAGRAM_REGEX = re.compile(
     r"https?://(?:www\.)?"
@@ -161,36 +148,26 @@ ULTIMOS_VIDEOS = {}
 # =========================================================
 
 def limpar_nome_arquivo(nome):
-    """
-    Remove caracteres que não podem existir em nomes de arquivos
-    no Windows.
-    """
+    """Remove caracteres que não podem existir em nomes de arquivos no Windows."""
 
     if not nome:
         nome = "audio"
 
     nome = html.unescape(str(nome))
-
     nome = re.sub(r'[<>:"/\\|?*]', '', nome)
-
     nome = nome.replace("\n", " ")
     nome = nome.replace("\r", " ")
-
     nome = re.sub(r"\s+", " ", nome)
-
     nome = nome.strip(" .")
 
     if not nome:
         nome = "audio"
 
-    # Limite para evitar caminho grande demais
     return nome[:180]
 
 
 def remover_query(url):
-    """
-    Remove ?query e #fragment da URL.
-    """
+    """Remove ?query e #fragment da URL."""
 
     if not url:
         return url
@@ -199,13 +176,7 @@ def remover_query(url):
         partes = urllib.parse.urlsplit(url)
 
         return urllib.parse.urlunsplit(
-            (
-                partes.scheme,
-                partes.netloc,
-                partes.path,
-                "",
-                ""
-            )
+            (partes.scheme, partes.netloc, partes.path, "", "")
         )
 
     except Exception:
@@ -213,9 +184,7 @@ def remover_query(url):
 
 
 def extrair_url(texto):
-    """
-    Pega a primeira URL encontrada em um texto.
-    """
+    """Pega a primeira URL encontrada em um texto."""
 
     if not texto:
         return None
@@ -229,31 +198,31 @@ def extrair_url(texto):
 
 
 def eh_spotify(url):
-    if not url:
-        return False
-
-    return bool(SPOTIFY_REGEX.search(url))
+    return bool(url) and bool(SPOTIFY_REGEX.search(url))
 
 
 def eh_youtube(url):
-    if not url:
-        return False
-
-    return bool(YOUTUBE_REGEX.search(url))
+    return bool(url) and bool(YOUTUBE_REGEX.search(url))
 
 
 def eh_tiktok(url):
-    if not url:
-        return False
-
-    return bool(TIKTOK_REGEX.search(url))
+    return bool(url) and bool(TIKTOK_REGEX.search(url))
 
 
 def eh_instagram(url):
-    if not url:
-        return False
+    return bool(url) and bool(INSTAGRAM_REGEX.search(url))
 
-    return bool(INSTAGRAM_REGEX.search(url))
+
+async def responder(origem, *args, **kwargs):
+    """
+    Envia uma mensagem tanto para Interaction quanto para Context
+    e SEMPRE devolve o objeto Message (followup.send precisa de wait=True).
+    """
+
+    if isinstance(origem, discord.Interaction):
+        return await origem.followup.send(*args, wait=True, **kwargs)
+
+    return await origem.send(*args, **kwargs)
 
 
 # =========================================================
@@ -261,13 +230,7 @@ def eh_instagram(url):
 # =========================================================
 
 def expandir_spotify_link(url):
-    """
-    Converte links do tipo:
-
-    https://spotify.link/xxxxx
-
-    para a URL real do Spotify.
-    """
+    """Converte https://spotify.link/xxxxx para a URL real do Spotify."""
 
     if not url:
         return url
@@ -302,9 +265,7 @@ def expandir_spotify_link(url):
 
 
 def extrair_spotify_track_id(url):
-    """
-    Extrai o ID da música do Spotify.
-    """
+    """Extrai o ID da música do Spotify."""
 
     if not url:
         return None
@@ -317,12 +278,7 @@ def extrair_spotify_track_id(url):
     ]
 
     for padrao in padroes:
-
-        resultado = re.search(
-            padrao,
-            url,
-            re.IGNORECASE
-        )
+        resultado = re.search(padrao, url, re.IGNORECASE)
 
         if resultado:
             return resultado.group(1)
@@ -331,9 +287,7 @@ def extrair_spotify_track_id(url):
 
 
 def requisicao_url(url):
-    """
-    Faz GET em uma URL e retorna o HTML.
-    """
+    """Faz GET em uma URL e retorna o HTML."""
 
     req = urllib.request.Request(
         url,
@@ -350,7 +304,6 @@ def requisicao_url(url):
     )
 
     with urllib.request.urlopen(req, timeout=8) as resposta:
-
         charset = resposta.headers.get_content_charset()
 
         if not charset:
@@ -358,45 +311,25 @@ def requisicao_url(url):
 
         conteudo = resposta.read()
 
-        return conteudo.decode(
-            charset,
-            errors="ignore"
-        )
+        return conteudo.decode(charset, errors="ignore")
 
 
 def valor_json(html_texto, chaves):
-    """
-    Tenta encontrar valores em estruturas JSON/HTML.
-
-    Exemplo:
-
-    "artistName":"NOME"
-    "trackTitle":"MUSICA"
-    """
+    """Tenta encontrar valores em estruturas JSON/HTML."""
 
     for chave in chaves:
-
         padroes = [
             rf'"{re.escape(chave)}"\s*:\s*"([^"]+)"',
             rf"'{re.escape(chave)}'\s*:\s*'([^']+)'",
         ]
 
         for padrao in padroes:
-
-            resultado = re.search(
-                padrao,
-                html_texto,
-                re.IGNORECASE
-            )
+            resultado = re.search(padrao, html_texto, re.IGNORECASE)
 
             if resultado:
-
                 valor = resultado.group(1)
 
-                valor = bytes(
-                    valor,
-                    "utf-8"
-                ).decode(
+                valor = bytes(valor, "utf-8").decode(
                     "unicode_escape",
                     errors="ignore"
                 )
@@ -416,103 +349,41 @@ def limpar_texto_spotify(texto):
     texto = texto.replace("\\/", "/")
     texto = texto.replace('\\"', '"')
 
-    texto = re.sub(
-        r"\s+",
-        " ",
-        texto
-    ).strip()
+    texto = re.sub(r"\s+", " ", texto).strip()
 
     return texto
 
 
 def extrair_info_do_embed_spotify(track_id):
-    """
-    Tenta pegar as informações da página embed do Spotify.
+    """Pega título/artistas da página embed do Spotify (apenas metadados)."""
 
-    Não baixa nada do Spotify.
-    Apenas pega metadados.
-    """
-
-    url = (
-        f"https://open.spotify.com/embed/track/{track_id}"
-    )
+    url = f"https://open.spotify.com/embed/track/{track_id}"
 
     try:
-
         pagina = requisicao_url(url)
-
-        pagina = limpar_texto_spotify(pagina)
+        pagina = limpar_texto_spotify(pagina) or ""
 
         titulo = None
         artistas = []
 
-        # =====================================================
         # TÍTULO
-        # =====================================================
+        for chave in ["trackTitle", "track_name", "trackName", "title", "name"]:
+            encontrado = valor_json(pagina, [chave])
 
-        chaves_titulo = [
-            "trackTitle",
-            "track_name",
-            "trackName",
-            "title",
-            "name"
-        ]
+            if encontrado and encontrado.lower() not in ["spotify", "spotify embed"]:
+                titulo = encontrado
+                break
 
-        for chave in chaves_titulo:
-
-            encontrado = valor_json(
-                pagina,
-                [chave]
-            )
-
-            if encontrado:
-
-                if encontrado.lower() not in [
-                    "spotify",
-                    "spotify embed"
-                ]:
-
-                    titulo = encontrado
-                    break
-
-        # =====================================================
         # ARTISTA
-        # =====================================================
+        for chave in ["artistName", "artist", "artist_name"]:
+            encontrado = valor_json(pagina, [chave])
 
-        chaves_artista = [
-            "artistName",
-            "artist",
-            "artist_name"
-        ]
+            if encontrado and encontrado.lower() != "spotify":
+                artistas.append(encontrado)
+                break
 
-        for chave in chaves_artista:
-
-            encontrado = valor_json(
-                pagina,
-                [chave]
-            )
-
-            if encontrado:
-
-                if encontrado.lower() != "spotify":
-
-                    artistas.append(
-                        encontrado
-                    )
-
-                    break
-
-        # =====================================================
-        # TENTA ARRAY DE ARTISTAS
-        # =====================================================
-
-        padroes_artistas = [
-            r'"artists"\s*:\s*\[(.*?)\]',
-            r'"artist"\s*:\s*\[(.*?)\]'
-        ]
-
-        for padrao in padroes_artistas:
-
+        # ARRAY DE ARTISTAS
+        for padrao in [r'"artists"\s*:\s*\[(.*?)\]', r'"artist"\s*:\s*\[(.*?)\]']:
             resultado = re.search(
                 padrao,
                 pagina,
@@ -522,37 +393,22 @@ def extrair_info_do_embed_spotify(track_id):
             if not resultado:
                 continue
 
-            bloco = resultado.group(1)
-
             encontrados = re.findall(
                 r'"name"\s*:\s*"([^"]+)"',
-                bloco
+                resultado.group(1)
             )
 
             for artista in encontrados:
+                artista = limpar_texto_spotify(artista)
 
-                artista = limpar_texto_spotify(
-                    artista
-                )
-
-                if not artista:
-                    continue
-
-                if artista.lower() == "spotify":
+                if not artista or artista.lower() == "spotify":
                     continue
 
                 if artista not in artistas:
+                    artistas.append(artista)
 
-                    artistas.append(
-                        artista
-                    )
-
-        # =====================================================
         # META OG:TITLE
-        # =====================================================
-
         if not titulo:
-
             og = re.search(
                 r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)',
                 pagina,
@@ -560,17 +416,10 @@ def extrair_info_do_embed_spotify(track_id):
             )
 
             if og:
+                titulo = limpar_texto_spotify(og.group(1))
 
-                titulo = limpar_texto_spotify(
-                    og.group(1)
-                )
-
-        # =====================================================
         # TITLE HTML
-        # =====================================================
-
         if not titulo:
-
             title_tag = re.search(
                 r"<title[^>]*>(.*?)</title>",
                 pagina,
@@ -578,13 +427,9 @@ def extrair_info_do_embed_spotify(track_id):
             )
 
             if title_tag:
-
-                titulo = limpar_texto_spotify(
-                    title_tag.group(1)
-                )
+                titulo = limpar_texto_spotify(title_tag.group(1))
 
                 if titulo:
-
                     titulo = re.sub(
                         r"\s*\|\s*Spotify.*$",
                         "",
@@ -592,12 +437,8 @@ def extrair_info_do_embed_spotify(track_id):
                         flags=re.IGNORECASE
                     ).strip()
 
-        # =====================================================
         # LIMPEZA
-        # =====================================================
-
         if titulo:
-
             titulo = titulo.strip()
 
             if titulo.lower() == "spotify":
@@ -606,27 +447,17 @@ def extrair_info_do_embed_spotify(track_id):
         artistas_limpos = []
 
         for artista in artistas:
+            artista = limpar_texto_spotify(artista)
 
-            artista = limpar_texto_spotify(
-                artista
-            )
-
-            if not artista:
-                continue
-
-            if artista.lower() == "spotify":
+            if not artista or artista.lower() == "spotify":
                 continue
 
             if artista not in artistas_limpos:
-
-                artistas_limpos.append(
-                    artista
-                )
+                artistas_limpos.append(artista)
 
         artistas = artistas_limpos
 
         if titulo or artistas:
-
             return {
                 "titulo": titulo,
                 "artistas": artistas,
@@ -634,10 +465,7 @@ def extrair_info_do_embed_spotify(track_id):
             }
 
     except Exception as e:
-
-        print(
-            f"[Spotify] Erro ao ler embed: {e}"
-        )
+        print(f"[Spotify] Erro ao ler embed: {e}")
 
     return None
 
@@ -654,74 +482,32 @@ def obter_info_spotify(url):
 
 
 def _obter_info_spotify(url):
-    """
-    Obtém título + artistas de uma música do Spotify.
-
-    Primeiro tenta o embed.
-    Depois tenta o oEmbed.
-    """
+    """Obtém título + artistas de uma música do Spotify (embed, depois oEmbed)."""
 
     try:
-
         url_original = url
 
-        # -----------------------------------------------------
-        # Expande spotify.link
-        # -----------------------------------------------------
+        url = expandir_spotify_link(url)
 
-        url = expandir_spotify_link(
-            url
-        )
+        print(f"[Spotify] URL real: {url}")
 
-        print(
-            f"[Spotify] URL real: {url}"
-        )
-
-        # -----------------------------------------------------
-        # ID
-        # -----------------------------------------------------
-
-        track_id = extrair_spotify_track_id(
-            url
-        )
+        track_id = extrair_spotify_track_id(url)
 
         if not track_id:
-
-            print(
-                "[Spotify] Não consegui encontrar o ID da música."
-            )
-
+            print("[Spotify] Não consegui encontrar o ID da música.")
             return None
 
-        print(
-            f"[Spotify] Track ID: {track_id}"
-        )
+        print(f"[Spotify] Track ID: {track_id}")
 
-        # -----------------------------------------------------
         # PRIMEIRO: EMBED
-        # -----------------------------------------------------
-
-        info = extrair_info_do_embed_spotify(
-            track_id
-        )
+        info = extrair_info_do_embed_spotify(track_id)
 
         if info:
-
-            titulo = info.get(
-                "titulo"
-            )
-
-            artistas = info.get(
-                "artistas",
-                []
-            )
+            titulo = info.get("titulo")
+            artistas = info.get("artistas", [])
 
             if titulo:
-
-                print(
-                    f"[Spotify] Título: {titulo}"
-                )
-
+                print(f"[Spotify] Título: {titulo}")
                 print(
                     f"[Spotify] Artistas: "
                     f"{', '.join(artistas) if artistas else 'não identificado'}"
@@ -733,56 +519,33 @@ def _obter_info_spotify(url):
                     "track_id": track_id
                 }
 
-        # -----------------------------------------------------
         # SEGUNDO: OEMBED
-        # -----------------------------------------------------
-
         oembed_url = (
             "https://open.spotify.com/oembed?"
-            + urllib.parse.urlencode(
-                {
-                    "url": url
-                }
-            )
+            + urllib.parse.urlencode({"url": url})
         )
 
-        print(
-            f"[Spotify] Tentando oEmbed..."
-        )
+        print("[Spotify] Tentando oEmbed...")
 
         resposta = urllib.request.urlopen(
             urllib.request.Request(
                 oembed_url,
-                headers={
-                    "User-Agent": "Mozilla/5.0"
-                }
+                headers={"User-Agent": "Mozilla/5.0"}
             ),
             timeout=6
         )
 
         dados = json.loads(
-            resposta.read().decode(
-                "utf-8",
-                errors="ignore"
-            )
+            resposta.read().decode("utf-8", errors="ignore")
         )
 
-        titulo = dados.get(
-            "title"
-        )
-
-        titulo = limpar_texto_spotify(
-            titulo
-        )
+        titulo = limpar_texto_spotify(dados.get("title"))
 
         if titulo and titulo.lower() == "spotify":
             titulo = None
 
         if titulo:
-
-            print(
-                f"[Spotify] Título pelo oEmbed: {titulo}"
-            )
+            print(f"[Spotify] Título pelo oEmbed: {titulo}")
 
             return {
                 "titulo": titulo,
@@ -790,19 +553,11 @@ def _obter_info_spotify(url):
                 "track_id": track_id
             }
 
-        print(
-            "[Spotify] Não consegui identificar a música."
-        )
-
-        print(
-            f"[Spotify] Link recebido: {url_original}"
-        )
+        print("[Spotify] Não consegui identificar a música.")
+        print(f"[Spotify] Link recebido: {url_original}")
 
     except Exception as e:
-
-        print(
-            f"[Spotify] Erro geral: {e}"
-        )
+        print(f"[Spotify] Erro geral: {e}")
 
     return None
 
@@ -856,7 +611,6 @@ async def pesquisar_youtube(pesquisa, quantidade=20):
     def buscar():
 
         try:
-
             opcoes = {
                 "quiet": True,
                 "skip_download": True,
@@ -875,58 +629,42 @@ async def pesquisar_youtube(pesquisa, quantidade=20):
 
                 resultados = []
 
-                for item in dados.get(
-                    "entries",
-                    []
-                ):
+                for item in (dados or {}).get("entries", []):
 
                     if not item:
                         continue
 
-                    video_id = item.get(
-                        "id"
-                    )
+                    video_id = item.get("id")
 
                     if not video_id:
                         continue
 
                     resultados.append(
                         {
-                            "title": item.get(
-                                "title",
-                                "Sem título"
+                            "title": item.get("title", "Sem título"),
+                            "url": f"https://www.youtube.com/watch?v={video_id}",
+                            "thumbnail": (
+                                item.get("thumbnail")
+                                or next(
+                                    (
+                                        thumb.get("url")
+                                        for thumb in reversed(item.get("thumbnails") or [])
+                                        if thumb.get("url")
+                                    ),
+                                    None
+                                )
+                                or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
                             ),
-                            "url": (
-                                f"https://www.youtube.com/watch?v={video_id}"
-                            ),
-                           "thumbnail": (
-    item.get("thumbnail")
-    or next(
-        (
-            thumb.get("url")
-            for thumb in reversed(item.get("thumbnails") or [])
-            if thumb.get("url")
-        ),
-        None
-    )
-    or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
-),
                         }
                     )
 
                 return resultados
 
         except Exception as e:
-
-            print(
-                f"[YouTube] Erro na pesquisa: {e}"
-            )
-
+            print(f"[YouTube] Erro na pesquisa: {e}")
             return []
 
-    resultado_busca = await asyncio.to_thread(
-        buscar
-    )
+    resultado_busca = await asyncio.to_thread(buscar)
 
     if resultado_busca:
         _cache_set(_CACHE_PESQUISA, chave_cache, resultado_busca)
@@ -934,26 +672,17 @@ async def pesquisar_youtube(pesquisa, quantidade=20):
     return resultado_busca
 
 
-async def pesquisar_musica_youtube(
-    titulo,
-    artistas
-):
+async def pesquisar_musica_youtube(titulo, artistas):
     """
     Procura a música do Spotify no YouTube.
 
-    Dá prioridade para resultados que:
-    - tenham o nome da música
-    - tenham o artista
-    - não sejam remix/slowed/etc.
+    Dá prioridade para resultados que tenham o nome da música,
+    o artista e que não sejam remix/slowed/etc.
     """
 
-    artista_texto = ", ".join(
-        artistas
-    ) if artistas else ""
+    artista_texto = ", ".join(artistas) if artistas else ""
 
-    pesquisa_base = (
-        f"{titulo} {artista_texto}"
-    ).strip()
+    pesquisa_base = f"{titulo} {artista_texto}".strip()
 
     pesquisas = [
         f"{pesquisa_base} official audio",
@@ -963,131 +692,67 @@ async def pesquisar_musica_youtube(
     todos = []
 
     for pesquisa in pesquisas:
+        resultados = await pesquisar_youtube(pesquisa, 5)
 
-        resultados = await pesquisar_youtube(
-            pesquisa,
-            5
-        )
-
-        todos.extend(
-            resultados
-        )
+        todos.extend(resultados)
 
         if resultados:
             break
 
     if not todos:
-
         return None
 
-    titulo_normalizado = (
-        titulo.lower()
-        .replace("-", " ")
-    )
+    titulo_normalizado = titulo.lower().replace("-", " ")
 
     palavras_titulo = [
-        p for p in re.findall(
-            r"[a-zA-ZÀ-ÿ0-9]+",
-            titulo_normalizado
-        )
+        p for p in re.findall(r"[a-zA-ZÀ-ÿ0-9]+", titulo_normalizado)
         if len(p) > 2
     ]
 
     palavras_artistas = []
 
     for artista in artistas:
-
         palavras_artistas.extend(
             [
                 p.lower()
-                for p in re.findall(
-                    r"[a-zA-ZÀ-ÿ0-9]+",
-                    artista
-                )
+                for p in re.findall(r"[a-zA-ZÀ-ÿ0-9]+", artista)
                 if len(p) > 2
             ]
         )
 
     proibidos = [
-        "sped up",
-        "slowed",
-        "reverb",
-        "8d",
-        "nightcore",
-        "cover",
-        "karaoke",
-        "instrumental",
-        "live",
-        "remix",
-        "edit",
-        "version"
+        "sped up", "slowed", "reverb", "8d", "nightcore", "cover",
+        "karaoke", "instrumental", "live", "remix", "edit", "version"
     ]
 
     def pontuar(item):
-
-        titulo_video = item.get(
-            "title",
-            ""
-        ).lower()
+        titulo_video = item.get("title", "").lower()
 
         pontos = 0
 
-        # ---------------------------------------------
-        # Nome da música
-        # ---------------------------------------------
-
         for palavra in palavras_titulo:
-
             if palavra in titulo_video:
-
                 pontos += 8
 
-        # ---------------------------------------------
-        # Artistas
-        # ---------------------------------------------
-
         for palavra in palavras_artistas:
-
             if palavra in titulo_video:
-
                 pontos += 10
-
-        # ---------------------------------------------
-        # Official
-        # ---------------------------------------------
 
         if "official audio" in titulo_video:
             pontos += 20
-
         elif "official" in titulo_video:
             pontos += 10
 
-        # ---------------------------------------------
-        # Penalizações
-        # ---------------------------------------------
-
         for palavra in proibidos:
-
             if palavra in titulo_video:
-
                 pontos -= 25
 
         return pontos
 
-    melhor = max(
-        todos,
-        key=pontuar
-    )
+    melhor = max(todos, key=pontuar)
 
-    print(
-        f"[Spotify] Encontrado no YouTube: "
-        f"{melhor.get('title')}"
-    )
-
-    print(
-        f"[Spotify] URL: "
-        f"{melhor.get('url')}"
-    )
+    print(f"[Spotify] Encontrado no YouTube: {melhor.get('title')}")
+    print(f"[Spotify] URL: {melhor.get('url')}")
 
     return melhor
 
@@ -1098,14 +763,9 @@ async def pesquisar_musica_youtube(
 
 async def baixar_video(url):
 
-    nome_base = limpar_nome_arquivo(
-        f"video_{random.randint(1000, 9999)}"
-    )
+    nome_base = limpar_nome_arquivo(f"video_{random.randint(1000, 9999)}")
 
-    caminho_base = os.path.join(
-        DOWNLOADS_DIR,
-        nome_base
-    )
+    caminho_base = os.path.join(DOWNLOADS_DIR, nome_base)
 
     opcoes = {
         "format": "bv*+ba/b",
@@ -1118,71 +778,39 @@ async def baixar_video(url):
     }
 
     if FFMPEG_PATH_REAL:
-        opcoes["ffmpeg_location"] = (
-            FFMPEG_PATH_REAL
-        )
+        opcoes["ffmpeg_location"] = FFMPEG_PATH_REAL
 
     def baixar():
 
-        with yt_dlp.YoutubeDL(
-            opcoes
-        ) as ydl:
+        with yt_dlp.YoutubeDL(opcoes) as ydl:
 
-            info = ydl.extract_info(
-                url,
-                download=True
-            )
+            info = ydl.extract_info(url, download=True)
 
-            arquivo = ydl.prepare_filename(
-                info
-            )
+            arquivo = ydl.prepare_filename(info)
 
-            mp4 = os.path.splitext(
-                arquivo
-            )[0] + ".mp4"
+            mp4 = os.path.splitext(arquivo)[0] + ".mp4"
 
             if os.path.isfile(mp4):
-
                 return mp4
 
             if os.path.isfile(arquivo):
-
                 return arquivo
 
             # Procura o arquivo criado
-            for nome in os.listdir(
-                DOWNLOADS_DIR
-            ):
+            for nome in os.listdir(DOWNLOADS_DIR):
+                if nome.startswith(nome_base):
+                    caminho = os.path.join(DOWNLOADS_DIR, nome)
 
-                if nome.startswith(
-                    nome_base
-                ):
-
-                    caminho = os.path.join(
-                        DOWNLOADS_DIR,
-                        nome
-                    )
-
-                    if os.path.isfile(
-                        caminho
-                    ):
-
+                    if os.path.isfile(caminho):
                         return caminho
 
             return None
 
     try:
-
-        return await asyncio.to_thread(
-            baixar
-        )
+        return await asyncio.to_thread(baixar)
 
     except Exception as e:
-
-        print(
-            f"[Download] Erro vídeo: {e}"
-        )
-
+        print(f"[Download] Erro vídeo: {e}")
         return None
 
 
@@ -1190,59 +818,31 @@ async def baixar_video(url):
 # COMPRESSÃO DE VÍDEO
 # =========================================================
 
-async def comprimir_video(
-    arquivo,
-    crf=28
-):
+async def comprimir_video(arquivo, crf=28):
 
     if not FFMPEG_EXE:
         return arquivo
 
-    nome, extensao = os.path.splitext(
-        arquivo
-    )
+    nome, extensao = os.path.splitext(arquivo)
 
-    saida = (
-        nome
-        + "_compressed"
-        + ".mp4"
-    )
+    saida = nome + "_compressed" + ".mp4"
 
     comando = [
         FFMPEG_EXE,
         "-y",
-        "-i",
-        arquivo,
-
-        "-vf",
-        "scale='min(1280,iw)':-2",
-
-        "-c:v",
-        "libx264",
-
-        "-preset",
-        "veryfast",
-
-        "-threads",
-        "0",
-
-        "-crf",
-        str(crf),
-
-        "-c:a",
-        "aac",
-
-        "-b:a",
-        "128k",
-
-        "-movflags",
-        "+faststart",
-
+        "-i", arquivo,
+        "-vf", "scale='min(1280,iw)':-2",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-threads", "0",
+        "-crf", str(crf),
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
         saida
     ]
 
     try:
-
         processo = await asyncio.create_subprocess_exec(
             *comando,
             stdout=asyncio.subprocess.PIPE,
@@ -1252,45 +852,26 @@ async def comprimir_video(
         stdout, stderr = await processo.communicate()
 
         if processo.returncode != 0:
-
-            print(
-                "[FFmpeg] Erro:",
-                stderr.decode(
-                    errors="ignore"
-                )
-            )
-
+            print("[FFmpeg] Erro:", stderr.decode(errors="ignore"))
             return arquivo
 
         if os.path.isfile(saida):
 
-            if os.path.getsize(
-                saida
-            ) < os.path.getsize(
-                arquivo
-            ):
-
+            if os.path.getsize(saida) < os.path.getsize(arquivo):
                 try:
-                    os.remove(
-                        arquivo
-                    )
-                except:
+                    os.remove(arquivo)
+                except OSError:
                     pass
 
                 return saida
 
             try:
-                os.remove(
-                    saida
-                )
-            except:
+                os.remove(saida)
+            except OSError:
                 pass
 
     except Exception as e:
-
-        print(
-            f"[FFmpeg] Erro compressão: {e}"
-        )
+        print(f"[FFmpeg] Erro compressão: {e}")
 
     return arquivo
 
@@ -1301,56 +882,37 @@ async def comprimir_video(
 
 async def baixar_audio(
     url,
-    nome_final=None,
-    titulo=None,
-    artistas=None
+    nome_final: Optional[str] = None,
+    titulo: Optional[str] = None,
+    artistas: Optional[list] = None
 ):
 
     if not nome_final:
+        nome_final = limpar_nome_arquivo(f"audio_{random.randint(1000, 9999)}")
 
-        nome_final = limpar_nome_arquivo(
-            f"audio_{random.randint(1000, 9999)}"
-        )
+    nome_final = limpar_nome_arquivo(nome_final)
 
-    nome_final = limpar_nome_arquivo(
-        nome_final
-    )
+    caminho_saida = os.path.join(DOWNLOADS_DIR, nome_final + ".mp3")
 
-    caminho_saida = os.path.join(
-        DOWNLOADS_DIR,
-        nome_final + ".mp3"
-    )
-
-    # -----------------------------------------------------
     # Se já existe, remove
-    # -----------------------------------------------------
-
-    if os.path.exists(
-        caminho_saida
-    ):
-
+    if os.path.exists(caminho_saida):
         try:
-            os.remove(
-                caminho_saida
-            )
-        except:
+            os.remove(caminho_saida)
+        except OSError:
             pass
 
     arquivo_temp = os.path.join(
         DOWNLOADS_DIR,
-        f"temp_{random.randint(100000,999999)}"
+        f"temp_{random.randint(100000, 999999)}"
     )
 
     opcoes = {
         "format": "bestaudio/best",
         "outtmpl": arquivo_temp + ".%(ext)s",
-
         "noplaylist": True,
-
         "quiet": True,
         "no_warnings": True,
         **YDL_RAPIDO,
-
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -1361,91 +923,46 @@ async def baixar_audio(
     }
 
     if FFMPEG_PATH_REAL:
-
-        opcoes[
-            "ffmpeg_location"
-        ] = FFMPEG_PATH_REAL
+        opcoes["ffmpeg_location"] = FFMPEG_PATH_REAL
 
     def baixar():
 
-        with yt_dlp.YoutubeDL(
-            opcoes
-        ) as ydl:
-
-            ydl.download(
-                [url]
-            )
+        with yt_dlp.YoutubeDL(opcoes) as ydl:
+            ydl.download([url])
 
         possiveis = []
 
-        for nome in os.listdir(
-            DOWNLOADS_DIR
-        ):
-
-            if nome.startswith(
-                os.path.basename(
-                    arquivo_temp
-                )
-            ) and nome.lower().endswith(
-                ".mp3"
+        for nome in os.listdir(DOWNLOADS_DIR):
+            if (
+                nome.startswith(os.path.basename(arquivo_temp))
+                and nome.lower().endswith(".mp3")
             ):
-
-                possiveis.append(
-                    os.path.join(
-                        DOWNLOADS_DIR,
-                        nome
-                    )
-                )
+                possiveis.append(os.path.join(DOWNLOADS_DIR, nome))
 
         if not possiveis:
-
             return None
 
-        arquivo = max(
-            possiveis,
-            key=os.path.getmtime
-        )
+        # str(...) garante o tipo para o os.replace
+        arquivo_encontrado = str(max(possiveis, key=os.path.getmtime))
 
-        # -------------------------------------------------
-        # Renomeia
-        # -------------------------------------------------
-
-        os.replace(
-            arquivo,
-            caminho_saida
-        )
+        os.replace(arquivo_encontrado, caminho_saida)
 
         return caminho_saida
 
     try:
-
-        resultado = await asyncio.to_thread(
-            baixar
-        )
+        resultado = await asyncio.to_thread(baixar)
 
         if not resultado:
             return None
 
-        # -------------------------------------------------
         # METADADOS DO MP3
-        # -------------------------------------------------
-
         if titulo and artistas:
-
-            await adicionar_metadados_mp3(
-                resultado,
-                titulo,
-                artistas
-            )
+            await adicionar_metadados_mp3(resultado, titulo, artistas)
 
         return resultado
 
     except Exception as e:
-
-        print(
-            f"[Download] Erro áudio: {e}"
-        )
-
+        print(f"[Download] Erro áudio: {e}")
         return None
 
 
@@ -1453,56 +970,31 @@ async def baixar_audio(
 # METADADOS DO MP3
 # =========================================================
 
-async def adicionar_metadados_mp3(
-    arquivo,
-    titulo,
-    artistas
-):
+async def adicionar_metadados_mp3(arquivo, titulo, artistas):
 
     if not FFMPEG_EXE:
         return
 
-    if not os.path.isfile(
-        arquivo
-    ):
+    if not os.path.isfile(arquivo):
         return
 
-    arquivo_temp = (
-        arquivo
-        + ".metadata.mp3"
-    )
+    arquivo_temp = arquivo + ".metadata.mp3"
 
-    artista_texto = ", ".join(
-        artistas
-    )
+    artista_texto = ", ".join(artistas)
 
     comando = [
         FFMPEG_EXE,
         "-y",
-
-        "-i",
-        arquivo,
-
-        "-map",
-        "0:a:0",
-
-        "-c:a",
-        "copy",
-
-        "-metadata",
-        f"title={titulo}",
-
-        "-metadata",
-        f"artist={artista_texto}",
-
-        "-metadata",
-        "album=Spotify",
-
+        "-i", arquivo,
+        "-map", "0:a:0",
+        "-c:a", "copy",
+        "-metadata", f"title={titulo}",
+        "-metadata", f"artist={artista_texto}",
+        "-metadata", "album=Spotify",
         arquivo_temp
     ]
 
     try:
-
         processo = await asyncio.create_subprocess_exec(
             *comando,
             stdout=asyncio.subprocess.PIPE,
@@ -1512,168 +1004,74 @@ async def adicionar_metadados_mp3(
         stdout, stderr = await processo.communicate()
 
         if processo.returncode != 0:
+            print("[MP3] Erro ao adicionar metadados:")
+            print(stderr.decode(errors="ignore"))
 
-            print(
-                "[MP3] Erro ao adicionar metadados:"
-            )
-
-            print(
-                stderr.decode(
-                    errors="ignore"
-                )
-            )
-
-            if os.path.exists(
-                arquivo_temp
-            ):
-
+            if os.path.exists(arquivo_temp):
                 try:
-                    os.remove(
-                        arquivo_temp
-                    )
-                except:
+                    os.remove(arquivo_temp)
+                except OSError:
                     pass
 
             return
 
-        if os.path.isfile(
-            arquivo_temp
-        ):
-
-            os.replace(
-                arquivo_temp,
-                arquivo
-            )
-
-            print(
-                "[MP3] Metadados adicionados!"
-            )
+        if os.path.isfile(arquivo_temp):
+            os.replace(arquivo_temp, arquivo)
+            print("[MP3] Metadados adicionados!")
 
     except Exception as e:
-
-        print(
-            f"[MP3] Erro metadados: {e}"
-        )
+        print(f"[MP3] Erro metadados: {e}")
 
 
 # =========================================================
 # SPOTIFY → YOUTUBE → MP3
 # =========================================================
 
-async def spotify_para_audio(
-    url
-):
+async def spotify_para_audio(url):
 
-    print(
-        "======================================"
-    )
+    print("======================================")
+    print("[Spotify] Iniciando...")
 
-    print(
-        "[Spotify] Iniciando..."
-    )
-
-    info = await asyncio.to_thread(
-        obter_info_spotify,
-        url
-    )
+    info = await asyncio.to_thread(obter_info_spotify, url)
 
     if not info:
-
-        print(
-            "[Spotify] Não consegui pegar "
-            "as informações da música."
-        )
-
+        print("[Spotify] Não consegui pegar as informações da música.")
         return None
 
-    titulo = info.get(
-        "titulo"
-    )
-
-    artistas = info.get(
-        "artistas",
-        []
-    )
+    titulo = info.get("titulo")
+    artistas = info.get("artistas", [])
 
     if not titulo:
-
-        print(
-            "[Spotify] Música sem título."
-        )
-
+        print("[Spotify] Música sem título.")
         return None
 
-    # -----------------------------------------------------
-    # Se não encontrou artista, tenta usar o título inteiro
-    # para o YouTube.
-    # -----------------------------------------------------
-
-    print(
-        f"[Spotify] Título: {titulo}"
-    )
-
+    print(f"[Spotify] Título: {titulo}")
     print(
         "[Spotify] Artistas:",
-        ", ".join(
-            artistas
-        ) if artistas else "não identificado"
+        ", ".join(artistas) if artistas else "não identificado"
     )
 
-    # -----------------------------------------------------
-    # Pesquisa no YouTube
-    # -----------------------------------------------------
+    print("[YouTube] Procurando música...")
 
-    print(
-        "[YouTube] Procurando música..."
-    )
-
-    resultado = await pesquisar_musica_youtube(
-        titulo,
-        artistas
-    )
+    resultado = await pesquisar_musica_youtube(titulo, artistas)
 
     if not resultado:
-
-        print(
-            "[YouTube] Não encontrei a música."
-        )
-
+        print("[YouTube] Não encontrei a música.")
         return None
 
-    youtube_url = resultado.get(
-        "url"
-    )
+    youtube_url = resultado.get("url")
 
     if not youtube_url:
-
         return None
 
-    # -----------------------------------------------------
-    # Nome do arquivo
-    # -----------------------------------------------------
-
     if artistas:
-
-        artista_texto = ", ".join(
-            artistas
-        )
-
+        artista_texto = ", ".join(artistas)
     else:
-
         artista_texto = "Artista desconhecido"
 
-    nome_arquivo = limpar_nome_arquivo(
-        f"{artista_texto} - {titulo}"
-    )
+    nome_arquivo = limpar_nome_arquivo(f"{artista_texto} - {titulo}")
 
-    print(
-        f"[Spotify] Arquivo final: "
-        f"{nome_arquivo}.mp3"
-    )
-
-    # -----------------------------------------------------
-    # Baixa pelo YouTube
-    # -----------------------------------------------------
+    print(f"[Spotify] Arquivo final: {nome_arquivo}.mp3")
 
     arquivo = await baixar_audio(
         youtube_url,
@@ -1683,20 +1081,11 @@ async def spotify_para_audio(
     )
 
     if not arquivo:
-
-        print(
-            "[Spotify] Falha ao baixar áudio."
-        )
-
+        print("[Spotify] Falha ao baixar áudio.")
         return None
 
-    print(
-        f"[Spotify] Áudio pronto: {arquivo}"
-    )
-
-    print(
-        "======================================"
-    )
+    print(f"[Spotify] Áudio pronto: {arquivo}")
+    print("======================================")
 
     return arquivo
 
@@ -1707,7 +1096,7 @@ async def spotify_para_audio(
 
 async def procurar_link_contexto(
     message,
-    ultimo_video=None
+    ultimo_video: Optional[str] = None
 ):
     """Encontra links no texto, em respostas e nos embeds recentes."""
 
@@ -1730,12 +1119,8 @@ async def procurar_link_contexto(
     def procurar_link_mensagem(msg):
         candidatos = []
 
-        # URLs escritas na mensagem
-        candidatos.extend(
-            URL_REGEX.findall(msg.content or "")
-        )
+        candidatos.extend(URL_REGEX.findall(msg.content or ""))
 
-        # URLs guardadas nos embeds, inclusive no título clicável
         for embed in msg.embeds:
             if embed.url:
                 candidatos.append(embed.url)
@@ -1747,14 +1132,10 @@ async def procurar_link_contexto(
                 candidatos.extend(URL_REGEX.findall(embed.title))
 
             if embed.description:
-                candidatos.extend(
-                    URL_REGEX.findall(embed.description)
-                )
+                candidatos.extend(URL_REGEX.findall(embed.description))
 
             for campo in embed.fields:
-                candidatos.extend(
-                    URL_REGEX.findall(campo.value or "")
-                )
+                candidatos.extend(URL_REGEX.findall(campo.value or ""))
 
         for candidato in candidatos:
             url = link_suportado(candidato)
@@ -1767,23 +1148,17 @@ async def procurar_link_contexto(
     # 1. Se respondeu a uma mensagem, verifica essa mensagem primeiro
     if message.reference and message.reference.message_id:
         try:
-            mensagem_referenciada = (
-                await message.channel.fetch_message(
-                    message.reference.message_id
-                )
+            mensagem_referenciada = await message.channel.fetch_message(
+                message.reference.message_id
             )
 
-            link = procurar_link_mensagem(
-                mensagem_referenciada
-            )
+            link = procurar_link_mensagem(mensagem_referenciada)
 
             if link:
                 return link
 
         except (discord.NotFound, discord.HTTPException) as erro:
-            print(
-                f"[Contexto] Erro ao ler resposta: {erro}"
-            )
+            print(f"[Contexto] Erro ao ler resposta: {erro}")
 
     # 2. Verifica a própria mensagem do comando
     link = procurar_link_mensagem(message)
@@ -1797,41 +1172,29 @@ async def procurar_link_contexto(
     if link:
         return link
 
-    # 4. Procura nos resultados e nas mensagens recentes do canal
+    # 4. Procura nas mensagens recentes do canal
     try:
-        async for msg in message.channel.history(
-            limit=25,
-            before=message
-        ):
+        async for msg in message.channel.history(limit=25, before=message):
             link = procurar_link_mensagem(msg)
 
             if link:
                 return link
 
     except discord.HTTPException as erro:
-        print(
-            f"[Contexto] Erro ao consultar histórico: {erro}"
-        )
+        print(f"[Contexto] Erro ao consultar histórico: {erro}")
 
     return None
+
 
 # =========================================================
 # VIEW DO YOUTUBE
 # =========================================================
 
-class YouTubeSearchView(
-    discord.ui.View
-):
+class YouTubeSearchView(discord.ui.View):
 
-    def __init__(
-        self,
-        resultados,
-        autor_id
-    ):
+    def __init__(self, resultados, autor_id):
 
-        super().__init__(
-            timeout=120
-        )
+        super().__init__(timeout=120)
 
         self.resultados = resultados
         self.autor_id = autor_id
@@ -1839,49 +1202,28 @@ class YouTubeSearchView(
 
     def gerar_embed(self):
 
-        item = self.resultados[
-            self.indice
-        ]
+        item = self.resultados[self.indice]
 
         embed = discord.Embed(
-            title=item.get(
-                "title",
-                "YouTube"
-            ),
-            url=item.get(
-                "url"
-            ),
-            color=discord.Color.from_str(
-                "#6A00FF"
-            )
+            title=item.get("title", "YouTube"),
+            url=item.get("url"),
+            color=discord.Color.from_str("#6A00FF")
         )
 
         thumbnail = item.get("thumbnail")
         if not thumbnail and item.get("id"):
-            thumbnail = (
-                f"https://i.ytimg.com/vi/"
-                f"{item['id']}/hqdefault.jpg"
-            )
+            thumbnail = f"https://i.ytimg.com/vi/{item['id']}/hqdefault.jpg"
 
         if thumbnail:
-            embed.set_image(
-                url=thumbnail
-            )
+            embed.set_image(url=thumbnail)
 
         embed.set_footer(
-            text=(
-                f"Resultado "
-                f"{self.indice + 1}/"
-                f"{len(self.resultados)}"
-            )
+            text=f"Resultado {self.indice + 1}/{len(self.resultados)}"
         )
 
         return embed
 
-    @discord.ui.button(
-        label="‹",
-        style=discord.ButtonStyle.secondary
-    )
+    @discord.ui.button(label="‹", style=discord.ButtonStyle.secondary)
     async def anterior(
         self,
         interaction: discord.Interaction,
@@ -1889,31 +1231,23 @@ class YouTubeSearchView(
     ):
 
         if interaction.user.id != self.autor_id:
-
             await interaction.response.send_message(
                 "❌ Esse painel não é seu.",
                 ephemeral=True
             )
-
             return
 
         self.indice -= 1
 
         if self.indice < 0:
-
-            self.indice = (
-                len(self.resultados) - 1
-            )
+            self.indice = len(self.resultados) - 1
 
         await interaction.response.edit_message(
             embed=self.gerar_embed(),
             view=self
         )
 
-    @discord.ui.button(
-        label="›",
-        style=discord.ButtonStyle.secondary
-    )
+    @discord.ui.button(label="›", style=discord.ButtonStyle.secondary)
     async def proximo(
         self,
         interaction: discord.Interaction,
@@ -1921,20 +1255,15 @@ class YouTubeSearchView(
     ):
 
         if interaction.user.id != self.autor_id:
-
             await interaction.response.send_message(
                 "❌ Esse painel não é seu.",
                 ephemeral=True
             )
-
             return
 
         self.indice += 1
 
-        if self.indice >= len(
-            self.resultados
-        ):
-
+        if self.indice >= len(self.resultados):
             self.indice = 0
 
         await interaction.response.edit_message(
@@ -1949,10 +1278,7 @@ class YouTubeSearchView(
 
 class Media(commands.Cog):
 
-    def __init__(
-        self,
-        bot
-    ):
+    def __init__(self, bot):
         self.bot = bot
 
         # Sistema de música por servidor
@@ -1967,10 +1293,7 @@ class Media(commands.Cog):
             return ctx.message.attachments[0]
 
         # Procura nas últimas 10 mensagens do canal
-        async for mensagem in ctx.channel.history(
-            limit=10,
-            before=ctx.message
-        ):
+        async for mensagem in ctx.channel.history(limit=10, before=ctx.message):
             if mensagem.attachments:
                 for anexo in mensagem.attachments:
                     nome = anexo.filename.lower()
@@ -1985,7 +1308,6 @@ class Media(commands.Cog):
 
         return None
 
-
     async def _detectar_track_confiavel(self, arquivo_local):
         """Analisa cinco trechos e exige concordância entre resultados."""
 
@@ -1999,10 +1321,7 @@ class Media(commands.Cog):
         ffprobe = shutil.which("ffprobe")
 
         if not ffprobe:
-            ffprobe = os.path.join(
-                FFMPEG_PATH_REAL,
-                "ffprobe.exe"
-            )
+            ffprobe = os.path.join(FFMPEG_PATH_REAL, "ffprobe.exe")
 
         if not os.path.isfile(ffprobe):
             print("[Shazam] FFprobe não encontrado.")
@@ -2037,16 +1356,12 @@ class Media(commands.Cog):
             return None
 
         # Sempre cinco posições de análise.
-        # Para vídeos curtos, alguns trechos podem se sobrepor.
         quantidade_trechos = 5
         tamanho_trecho = min(8.0, max(5.0, duracao / 5.0))
         inicio_maximo = max(0.0, duracao - tamanho_trecho)
 
         inicios = [
-            round(
-                inicio_maximo * indice / (quantidade_trechos - 1),
-                3
-            )
+            round(inicio_maximo * indice / (quantidade_trechos - 1), 3)
             for indice in range(quantidade_trechos)
         ]
 
@@ -2058,11 +1373,7 @@ class Media(commands.Cog):
             for indice, inicio in enumerate(inicios):
                 trecho = os.path.join(
                     DOWNLOADS_DIR,
-                    (
-                        f"shazam_trecho_"
-                        f"{random.randint(100000, 999999)}_"
-                        f"{indice}.mp3"
-                    )
+                    f"shazam_trecho_{random.randint(100000, 999999)}_{indice}.mp3"
                 )
 
                 temporarios.append(trecho)
@@ -2142,10 +1453,7 @@ class Media(commands.Cog):
                 return None
 
             def normalizar(texto):
-                texto = unicodedata.normalize(
-                    "NFKD",
-                    str(texto).lower()
-                )
+                texto = unicodedata.normalize("NFKD", str(texto).lower())
 
                 return "".join(
                     caractere
@@ -2165,26 +1473,16 @@ class Media(commands.Cog):
                     normalizar(track.get("subtitle", ""))
                 )
 
-            contagem = Counter(
-                chave(track)
-                for track in resultados
-            )
+            contagem = Counter(chave(track) for track in resultados)
 
             melhor_chave, quantidade = contagem.most_common(1)[0]
 
-                       # Exige 3 identificações iguais entre os 5 trechos.
-            # Se não houver confirmação suficiente, não arrisca.
+            # Exige 3 identificações iguais entre os 5 trechos.
             if quantidade < 3:
                 print(
                     f"[Shazam] Resultado recusado: "
                     f"{quantidade} confirmações. "
                     "São necessárias pelo menos 3."
-                )
-                return None
-                print(
-                    "[Shazam] Resultado inconclusivo: "
-                    f"{quantidade} de {len(resultados)} "
-                    "identificações concordaram."
                 )
                 return None
 
@@ -2206,7 +1504,70 @@ class Media(commands.Cog):
                         os.remove(temporario)
                 except OSError:
                     pass
-                
+
+    # =====================================================
+    # EMBED DA MÚSICA (usado pelos dois comandos detectar)
+    # =====================================================
+
+    def _montar_embed_musica(self, track):
+
+        titulo = track.get("title", "Não encontrado")
+        artista = track.get("subtitle", "Não encontrado")
+        data = track.get("releasedate") or "Não encontrada"
+
+        imagens = track.get("images", {})
+        capa = imagens.get("coverarthq") or imagens.get("coverart")
+
+        album = "Não encontrado"
+        gravadora = "Não encontrada"
+
+        for section in track.get("sections", []):
+            for item in section.get("metadata", []):
+                nome_item = item.get("title", "").lower()
+                valor = item.get("text")
+
+                if not valor:
+                    continue
+
+                if nome_item in ["album", "álbum"]:
+                    album = valor
+
+                elif nome_item in ["label", "gravadora"]:
+                    gravadora = valor
+
+        embed = discord.Embed(
+            title="🎵 Música encontrada!",
+            description=f"**{titulo}**\npor **{artista}**",
+            color=discord.Color.from_str("#6A00FF")
+        )
+
+        embed.add_field(name="🎤 Artista", value=artista, inline=True)
+        embed.add_field(name="💿 Álbum", value=album, inline=True)
+        embed.add_field(name="📅 Data", value=data, inline=True)
+        embed.add_field(name="🏷️ Gravadora", value=gravadora, inline=True)
+
+        if capa:
+            embed.set_thumbnail(url=capa)
+
+        link_shazam = track.get("share", {}).get("href")
+
+        if link_shazam:
+            embed.url = link_shazam
+
+        embed.set_footer(text="Identificado pelo Shazam")
+
+        return embed
+
+    def _embed_nao_encontrada(self):
+        return discord.Embed(
+            title="🎵 Música não encontrada",
+            description=(
+                "Não consegui identificar a música com confiança.\n\n"
+                "Tente enviar outro trecho do áudio ou vídeo."
+            ),
+            color=discord.Color.from_str("#6A00FF")
+        )
+
     # =====================================================
     # /youtube
     # =====================================================
@@ -2220,9 +1581,7 @@ class Media(commands.Cog):
         name="pesquisa",
         description="Pesquisa vídeos no YouTube"
     )
-    @app_commands.describe(
-        pesquisa="O que você quer pesquisar"
-    )
+    @app_commands.describe(pesquisa="O que você quer pesquisar")
     async def youtube_pesquisa(
         self,
         interaction: discord.Interaction,
@@ -2231,24 +1590,48 @@ class Media(commands.Cog):
 
         await interaction.response.defer()
 
-        resultados = await pesquisar_youtube(
-            pesquisa
-        )
+        resultados = await pesquisar_youtube(pesquisa)
 
         if not resultados:
-
-            await interaction.followup.send(
-                "❌ Não encontrei resultados."
-            )
-
+            await interaction.followup.send("❌ Não encontrei resultados.")
             return
 
-        view = YouTubeSearchView(
-            resultados,
-            interaction.user.id
-        )
+        view = YouTubeSearchView(resultados, interaction.user.id)
 
         await interaction.followup.send(
+            embed=view.gerar_embed(),
+            view=view
+        )
+
+    # =====================================================
+    # PREFIXO -YT
+    # =====================================================
+
+    @commands.command(
+        name="yt",
+        aliases=["youtube"]
+    )
+    async def yt_prefix(
+        self,
+        ctx,
+        *,
+        pesquisa: Optional[str] = None
+    ):
+
+        if not pesquisa:
+            await ctx.send("❌ Use: `-yt nome do vídeo`")
+            return
+
+        async with ctx.typing():
+            resultados = await pesquisar_youtube(pesquisa)
+
+        if not resultados:
+            await ctx.send("❌ Não encontrei resultados.")
+            return
+
+        view = YouTubeSearchView(resultados, ctx.author.id)
+
+        await ctx.send(
             embed=view.gerar_embed(),
             view=view
         )
@@ -2272,23 +1655,44 @@ class Media(commands.Cog):
     async def extrair_audio_slash(
         self,
         interaction: discord.Interaction,
-        link: str = None
+        link: Optional[str] = None
     ):
 
         await interaction.response.defer()
 
         if not link:
-
             await interaction.followup.send(
                 "❌ Coloque o link da música/vídeo."
             )
-
             return
 
-        await self.enviar_audio(
-            interaction,
-            link
-        )
+        await self.enviar_audio(interaction, link)
+
+    # =====================================================
+    # PREPARAR VÍDEO (compressão + limite)
+    # =====================================================
+
+    async def _preparar_video(self, arquivo, aviso=None):
+        """Comprime se passar do limite. Retorna o arquivo ou None se não coube."""
+
+        if os.path.getsize(arquivo) > LIMITE_DISCORD:
+            if aviso:
+                await aviso()
+
+            arquivo = await comprimir_video(arquivo, 28)
+
+        if os.path.getsize(arquivo) > LIMITE_DISCORD:
+            arquivo = await comprimir_video(arquivo, 31)
+
+        if os.path.getsize(arquivo) > LIMITE_DISCORD:
+            try:
+                os.remove(arquivo)
+            except OSError:
+                pass
+
+            return None
+
+        return arquivo
 
     # =====================================================
     # /download
@@ -2298,9 +1702,7 @@ class Media(commands.Cog):
         name="download",
         description="Baixa um vídeo"
     )
-    @app_commands.describe(
-        link="Link do vídeo"
-    )
+    @app_commands.describe(link="Link do vídeo")
     async def download_slash(
         self,
         interaction: discord.Interaction,
@@ -2314,72 +1716,28 @@ class Media(commands.Cog):
             or eh_tiktok(link)
             or eh_instagram(link)
         ):
-
             await interaction.followup.send(
                 "❌ Esse link não parece ser um vídeo válido."
             )
-
             return
 
-        arquivo = await baixar_video(
-            link
-        )
+        arquivo = await baixar_video(link)
 
         if not arquivo:
-
-            await interaction.followup.send(
-                "❌ Não consegui baixar o vídeo."
-            )
-
+            await interaction.followup.send("❌ Não consegui baixar o vídeo.")
             return
 
-        tamanho = os.path.getsize(
-            arquivo
-        )
-
-        # =================================================
-        # COMPRIME SE PASSAR DO LIMITE
-        # =================================================
-
-        if tamanho > LIMITE_DISCORD:
-
+        async def aviso():
             await interaction.followup.send(
                 "⏳ O vídeo ficou grande, vou tentar comprimir..."
             )
 
-            arquivo = await comprimir_video(
-                arquivo,
-                28
-            )
+        arquivo = await self._preparar_video(arquivo, aviso)
 
-            tamanho = os.path.getsize(
-                arquivo
-            )
-
-        if tamanho > LIMITE_DISCORD:
-
-            arquivo = await comprimir_video(
-                arquivo,
-                31
-            )
-
-            tamanho = os.path.getsize(
-                arquivo
-            )
-
-        if tamanho > LIMITE_DISCORD:
-
-            try:
-                os.remove(
-                    arquivo
-                )
-            except:
-                pass
-
+        if not arquivo:
             await interaction.followup.send(
                 "❌ O vídeo continua maior que o limite do Discord."
             )
-
             return
 
         try:
@@ -2405,28 +1763,21 @@ class Media(commands.Cog):
 
     @commands.command(
         name="dl",
-        aliases=[
-            "download"
-        ]
+        aliases=["download"]
     )
     async def dl_prefix(
         self,
         ctx,
-        link: str = None
+        link: Optional[str] = None
     ):
 
         if not link:
-
-            link = await procurar_link_contexto(
-                ctx.message
-            )
+            link = await procurar_link_contexto(ctx.message)
 
         if not link:
-
             await ctx.send(
                 "❌ Manda um link ou responde uma mensagem que tenha um link."
             )
-
             return
 
         if not (
@@ -2434,85 +1785,33 @@ class Media(commands.Cog):
             or eh_tiktok(link)
             or eh_instagram(link)
         ):
-
-            await ctx.send(
-                "❌ Esse link não parece ser um vídeo."
-            )
-
+            await ctx.send("❌ Esse link não parece ser um vídeo.")
             return
 
-        msg = await ctx.send(
-            "⏳ Baixando vídeo..."
-        )
+        msg = await ctx.send("⏳ Baixando vídeo...")
 
-        arquivo = await baixar_video(
-            link
-        )
+        arquivo = await baixar_video(link)
 
         if not arquivo:
-
-            await msg.edit(
-                content="❌ Não consegui baixar o vídeo."
-            )
-
+            await msg.edit(content="❌ Não consegui baixar o vídeo.")
             return
 
-        tamanho = os.path.getsize(
-            arquivo
-        )
-
-        if tamanho > LIMITE_DISCORD:
-
+        async def aviso():
             await msg.edit(
-                content=(
-                    "⏳ O vídeo ficou grande, "
-                    "comprimindo..."
-                )
+                content="⏳ O vídeo ficou grande, comprimindo..."
             )
 
-            arquivo = await comprimir_video(
-                arquivo,
-                28
-            )
+        arquivo = await self._preparar_video(arquivo, aviso)
 
-            tamanho = os.path.getsize(
-                arquivo
-            )
-
-        if tamanho > LIMITE_DISCORD:
-
-            arquivo = await comprimir_video(
-                arquivo,
-                31
-            )
-
-            tamanho = os.path.getsize(
-                arquivo
-            )
-
-        if tamanho > LIMITE_DISCORD:
-
-            try:
-                os.remove(
-                    arquivo
-                )
-            except:
-                pass
-
+        if not arquivo:
             await msg.edit(
-                content=(
-                    "❌ O vídeo continua maior "
-                    "que o limite do Discord."
-                )
+                content="❌ O vídeo continua maior que o limite do Discord."
             )
-
             return
 
         try:
-
             await msg.delete()
-
-        except:
+        except discord.HTTPException:
             pass
 
         try:
@@ -2538,100 +1837,44 @@ class Media(commands.Cog):
 
     @commands.command(
         name="extrair",
-        aliases=[
-            "extract"
-        ]
+        aliases=["extract"]
     )
     async def extrair_prefix(
         self,
         ctx,
-        tipo: str = None,
-        link: str = None
+        tipo: Optional[str] = None,
+        link: Optional[str] = None
     ):
 
-        # -------------------------------------------------
-        # Aceita:
-        #
-        # -extrair audio LINK
-        # -extract audio LINK
-        # -------------------------------------------------
-
-        if not tipo:
-
-            await ctx.send(
-                "❌ Use: `-extrair audio LINK`"
-            )
-
-            return
-
-        if tipo.lower() not in [
-            "audio",
-            "áudio"
-        ]:
-
-            await ctx.send(
-                "❌ Use: `-extrair audio LINK`"
-            )
-
+        # Aceita: -extrair audio LINK / -extract audio LINK
+        if not tipo or tipo.lower() not in ["audio", "áudio"]:
+            await ctx.send("❌ Use: `-extrair audio LINK`")
             return
 
         if not link:
-
             link = await procurar_link_contexto(
                 ctx.message,
-                ULTIMOS_VIDEOS.get(
-                    ctx.channel.id
-                )
+                ULTIMOS_VIDEOS.get(ctx.channel.id)
             )
 
         if not link:
-
             await ctx.send(
                 "❌ Manda um link ou responde uma mensagem com um link."
             )
-
             return
 
-        await self.enviar_audio(
-            ctx,
-            link
-        )
+        await self.enviar_audio(ctx, link)
 
     # =====================================================
     # ENVIAR ÁUDIO
     # =====================================================
 
-    async def enviar_audio(
-        self,
-        origem,
-        url
-    ):
+    async def enviar_audio(self, origem, url):
 
-        url = extrair_url(
-            url
-        )
+        url = extrair_url(url)
 
         if not url:
-
-            mensagem = (
-                "❌ Não encontrei um link válido."
-            )
-
-            if isinstance(
-                origem,
-                discord.Interaction
-            ):
-
-                await origem.followup.send(
-                    mensagem
-                )
-
-            else:
-
-                await origem.send(
-                    mensagem
-                )
-
+            await responder(origem, "❌ Não encontrei um link válido.")
             return
 
         # =================================================
@@ -2640,337 +1883,106 @@ class Media(commands.Cog):
 
         if eh_spotify(url):
 
-            if isinstance(
+            status = await responder(
                 origem,
-                discord.Interaction
-            ):
-
-                status = await origem.followup.send(
-                    "⏳ Pegando informações do Spotify e procurando no YouTube..."
-                )
-
-            else:
-
-                status = await origem.send(
-                    "⏳ Pegando informações do Spotify e procurando no YouTube..."
-                )
-
-            arquivo = await spotify_para_audio(
-                url
+                "⏳ Pegando informações do Spotify e procurando no YouTube..."
             )
 
-            if not arquivo:
+            arquivo = await spotify_para_audio(url)
 
+            if not arquivo:
                 mensagem = (
                     "❌ Não consegui identificar "
                     "ou encontrar essa música."
                 )
 
                 try:
-
-                    await status.edit(
-                        content=mensagem
-                    )
-
-                except:
-
-                    if isinstance(
-                        origem,
-                        discord.Interaction
-                    ):
-
-                        await origem.followup.send(
-                            mensagem
-                        )
-
-                    else:
-
-                        await origem.send(
-                            mensagem
-                        )
+                    await status.edit(content=mensagem)
+                except discord.HTTPException:
+                    await responder(origem, mensagem)
 
                 return
-
-            try:
-
-                await status.delete()
-
-            except:
-                pass
-
-            # ---------------------------------------------
-            # Tamanho
-            # ---------------------------------------------
-
-            if os.path.getsize(
-                arquivo
-            ) > LIMITE_DISCORD:
-
-                try:
-                    os.remove(
-                        arquivo
-                    )
-                except:
-                    pass
-
-                mensagem = (
-                    "❌ O MP3 ficou maior que "
-                    "o limite permitido."
-                )
-
-                if isinstance(
-                    origem,
-                    discord.Interaction
-                ):
-
-                    await origem.followup.send(
-                        mensagem
-                    )
-
-                else:
-
-                    await origem.send(
-                        mensagem
-                    )
-
-                return
-
-            try:
-
-                arquivo_discord = discord.File(
-                    arquivo,
-                    filename=os.path.basename(
-                        arquivo
-                    )
-                )
-
-                if isinstance(
-                    origem,
-                    discord.Interaction
-                ):
-
-                    await origem.followup.send(
-                        content="🎵 Áudio extraído!",
-                        file=arquivo_discord
-                    )
-
-                else:
-
-                    await origem.send(
-                        content="🎵 Áudio extraído!",
-                        file=arquivo_discord
-                    )
-
-            except Exception as e:
-
-                print(
-                    f"[Discord] Erro enviando Spotify: {e}"
-                )
-
-                mensagem = (
-                    "❌ Não consegui enviar o MP3."
-                )
-
-                if isinstance(
-                    origem,
-                    discord.Interaction
-                ):
-
-                    await origem.followup.send(
-                        mensagem
-                    )
-
-                else:
-
-                    await origem.send(
-                        mensagem
-                    )
-
-            finally:
-
-                try:
-
-                    if os.path.exists(
-                        arquivo
-                    ):
-
-                        os.remove(
-                            arquivo
-                        )
-
-                except:
-                    pass
-
-            return
 
         # =================================================
         # YOUTUBE / TIKTOK / INSTAGRAM
         # =================================================
 
-        if not (
-            eh_youtube(url)
-            or eh_tiktok(url)
-            or eh_instagram(url)
-        ):
-
-            mensagem = (
-                "❌ Esse link não é de "
-                "YouTube, TikTok, Instagram ou Spotify."
-            )
-
-            if isinstance(
-                origem,
-                discord.Interaction
-            ):
-
-                await origem.followup.send(
-                    mensagem
-                )
-
-            else:
-
-                await origem.send(
-                    mensagem
-                )
-
-            return
-
-        if isinstance(
-            origem,
-            discord.Interaction
-        ):
-
-            status = await origem.followup.send(
-                "⏳ Extraindo áudio..."
-            )
-
         else:
 
-            status = await origem.send(
-                "⏳ Extraindo áudio..."
-            )
-
-        arquivo = await baixar_audio(
-            url
-        )
-
-        if not arquivo:
-
-            try:
-
-                await status.edit(
-                    content="❌ Não consegui extrair o áudio."
+            if not (
+                eh_youtube(url)
+                or eh_tiktok(url)
+                or eh_instagram(url)
+            ):
+                await responder(
+                    origem,
+                    "❌ Esse link não é de "
+                    "YouTube, TikTok, Instagram ou Spotify."
                 )
+                return
 
-            except:
-                pass
+            status = await responder(origem, "⏳ Extraindo áudio...")
 
-            return
+            arquivo = await baixar_audio(url)
+
+            if not arquivo:
+                try:
+                    await status.edit(content="❌ Não consegui extrair o áudio.")
+                except discord.HTTPException:
+                    pass
+
+                return
 
         # =================================================
         # TAMANHO
         # =================================================
 
-        if os.path.getsize(
-            arquivo
-        ) > LIMITE_DISCORD:
-
+        if os.path.getsize(arquivo) > LIMITE_DISCORD:
             try:
-                os.remove(
-                    arquivo
-                )
-            except:
+                os.remove(arquivo)
+            except OSError:
                 pass
 
             try:
-
                 await status.edit(
-                    content=(
-                        "❌ O MP3 ficou maior que "
-                        "o limite do Discord."
-                    )
+                    content="❌ O MP3 ficou maior que o limite do Discord."
                 )
-
-            except:
+            except discord.HTTPException:
                 pass
 
             return
 
         try:
-
             await status.delete()
-
-        except:
+        except discord.HTTPException:
             pass
 
         # =================================================
-        # ENVIA SEM EMBED
+        # ENVIA
         # =================================================
 
         try:
-
             arquivo_discord = discord.File(
                 arquivo,
-                filename=os.path.basename(
-                    arquivo
-                )
+                filename=os.path.basename(arquivo)
             )
 
-            if isinstance(
+            await responder(
                 origem,
-                discord.Interaction
-            ):
-
-                await origem.followup.send(
-                    content="🎵 Áudio extraído!",
-                    file=arquivo_discord
-                )
-
-            else:
-
-                await origem.send(
-                    content="🎵 Áudio extraído!",
-                    file=arquivo_discord
-                )
+                content="🎵 Áudio extraído!",
+                file=arquivo_discord
+            )
 
         except Exception as e:
+            print(f"[Discord] Erro enviando áudio: {e}")
 
-            print(
-                f"[Discord] Erro enviando áudio: {e}"
-            )
-
-            mensagem = (
-                "❌ Não consegui enviar o MP3."
-            )
-
-            if isinstance(
-                origem,
-                discord.Interaction
-            ):
-
-                await origem.followup.send(
-                    mensagem
-                )
-
-            else:
-
-                await origem.send(
-                    mensagem
-                )
+            await responder(origem, "❌ Não consegui enviar o MP3.")
 
         finally:
-
             try:
-
-                if os.path.exists(
-                    arquivo
-                ):
-
-                    os.remove(
-                        arquivo
-                    )
-
-            except:
+                if os.path.exists(arquivo):
+                    os.remove(arquivo)
+            except OSError:
                 pass
 
     # =====================================================
@@ -2993,348 +2005,116 @@ class Media(commands.Cog):
     async def detectar_audio_slash(
         self,
         interaction: discord.Interaction,
-        arquivo: discord.Attachment = None,
-        link: str = None
+        arquivo: Optional[discord.Attachment] = None,
+        link: Optional[str] = None
     ):
 
         await interaction.response.defer()
 
-        arquivo_local = None
+        arquivo_local: Optional[str] = None
+        status: Optional[discord.WebhookMessage] = None
 
         try:
 
-            # =================================================
             # ANEXO
-            # =================================================
-
             if arquivo:
-
-                nome = limpar_nome_arquivo(
-                    arquivo.filename
-                )
+                nome = limpar_nome_arquivo(arquivo.filename)
 
                 arquivo_local = os.path.join(
                     DOWNLOADS_DIR,
                     f"shazam_{random.randint(100000, 999999)}_{nome}"
                 )
 
-                await arquivo.save(
-                    arquivo_local
-                )
+                await arquivo.save(Path(arquivo_local))
 
-            # =================================================
             # LINK
-            # =================================================
-
             elif link:
-
                 url = extrair_url(link)
 
                 if not url:
-
                     await interaction.followup.send(
                         "❌ Não encontrei um link válido."
                     )
-
                     return
 
                 status = await interaction.followup.send(
-                    "⏳ Baixando o áudio..."
+                    "⏳ Baixando o áudio...",
+                    wait=True
                 )
 
-                arquivo_local = await baixar_audio(
-                    url
-                )
+                arquivo_local = await baixar_audio(url)
 
                 try:
                     await status.delete()
-                except:
+                except discord.HTTPException:
                     pass
 
-                if not arquivo_local:
+                status = None
 
+                if not arquivo_local:
                     await interaction.followup.send(
                         "❌ Não consegui baixar o áudio desse link."
                     )
-
                     return
 
             else:
-
                 await interaction.followup.send(
                     "❌ Envie um áudio/vídeo ou coloque um link."
                 )
-
                 return
 
-            # =================================================
-            # CONVERTER VÍDEO/ÁUDIO PARA MP3
-            # =================================================
-
+            # IDENTIFICAR
             status = await interaction.followup.send(
-                "🔎 Procurando a música..."
+                "🔎 Procurando a música...",
+                wait=True
             )
 
             if not FFMPEG_EXE:
-
-                await status.edit(
-                    content="❌ FFmpeg não foi encontrado."
-                )
-
+                await status.edit(content="❌ FFmpeg não foi encontrado.")
+                status = None
                 return
 
-            arquivo_shazam = os.path.join(
-                DOWNLOADS_DIR,
-                f"shazam_audio_{random.randint(100000, 999999)}.mp3"
-            )
-
-            comando = [
-                FFMPEG_EXE,
-                "-y",
-                "-i",
-                arquivo_local,
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                "44100",
-                "-c:a",
-                "libmp3lame",
-                "-b:a",
-                "192k",
-                arquivo_shazam
-            ]
-
-            processo = await asyncio.create_subprocess_exec(
-                *comando,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-
-            stdout, stderr = await processo.communicate()
-
-            if processo.returncode != 0:
-
-                print(
-                    "[Shazam] Erro FFmpeg:",
-                    stderr.decode(errors="ignore")
-                )
-
-                await status.edit(
-                    content="❌ Não consegui extrair o áudio."
-                )
-
-                return
-
-            # =================================================
-            # SHAZAM
-            # =================================================
-
-            track = await self._detectar_track_confiavel(
-    arquivo_local
-            )
+            track = await self._detectar_track_confiavel(arquivo_local)
 
             if not track:
-                embed_erro = discord.Embed(
-                    title="🎵 Música não encontrada",
-                    description=(
-                        "Não consegui identificar a música com confiança.\n\n"
-                        "Tente enviar outro trecho do áudio ou vídeo."
-                    ),
-                    color=discord.Color.from_str("#6A00FF")
-                )
-
                 await status.edit(
                     content=None,
-                    embed=embed_erro
+                    embed=self._embed_nao_encontrada()
                 )
+                # Impede o finally de apagar o embed
+                status = None
                 return
 
-            # =================================================
-            # INFORMAÇÕES
-            # =================================================
-
-            titulo = track.get(
-                "title",
-                "Não encontrado"
-            )
-
-            artista = track.get(
-                "subtitle",
-                "Não encontrado"
-            )
-
-            data = track.get(
-                "releasedate"
-            ) or "Não encontrada"
-
-            capa = (
-                track.get(
-                    "images",
-                    {}
-                ).get(
-                    "coverarthq"
-                )
-                or
-                track.get(
-                    "images",
-                    {}
-                ).get(
-                    "coverart"
-                )
-            )
-
-            album = "Não encontrado"
-            gravadora = "Não encontrada"
-
-            # =================================================
-            # METADADOS
-            # =================================================
-
-            for section in track.get(
-                "sections",
-                []
-            ):
-
-                for item in section.get(
-                    "metadata",
-                    []
-                ):
-
-                    nome = item.get(
-                        "title",
-                        ""
-                    ).lower()
-
-                    valor = item.get(
-                        "text"
-                    )
-
-                    if not valor:
-                        continue
-
-                    if nome in [
-                        "album",
-                        "álbum"
-                    ]:
-
-                        album = valor
-
-                    elif nome in [
-                        "label",
-                        "gravadora"
-                    ]:
-
-                        gravadora = valor
-
-            # =================================================
-            # EMBED
-            # =================================================
-
-            embed = discord.Embed(
-                title="🎵 Música encontrada!",
-                description=(
-                    f"**{titulo}**\n"
-                    f"por **{artista}**"
-                ),
-                color=discord.Color.from_str(
-                    "#6A00FF"
-                )
-            )
-
-            embed.add_field(
-                name="🎤 Artista",
-                value=artista,
-                inline=True
-            )
-
-            embed.add_field(
-                name="💿 Álbum",
-                value=album,
-                inline=True
-            )
-
-            embed.add_field(
-                name="📅 Data",
-                value=data,
-                inline=True
-            )
-
-            embed.add_field(
-                name="🏷️ Gravadora",
-                value=gravadora,
-                inline=True
-            )
-
-            if capa:
-
-                embed.set_thumbnail(
-                    url=capa
-                )
-
-            link_shazam = (
-                track.get(
-                    "share",
-                    {}
-                ).get(
-                    "href"
-                )
-            )
-
-            if link_shazam:
-
-                embed.url = link_shazam
-
-            embed.set_footer(
-                text="Identificado pelo Shazam"
-            )
-
             await status.delete()
+            status = None
 
             await interaction.followup.send(
-                embed=embed
+                embed=self._montar_embed_musica(track)
             )
 
         except Exception as e:
-
-            print(
-                f"[Shazam] Erro: {e}"
-            )
+            print(f"[Shazam] Erro: {e}")
 
             try:
-
                 await interaction.followup.send(
                     "❌ Ocorreu um erro ao tentar identificar a música."
                 )
-
-            except:
+            except discord.HTTPException:
                 pass
 
         finally:
+            if status:
+                try:
+                    await status.delete()
+                except discord.HTTPException:
+                    pass
 
-            # =================================================
-            # LIMPEZA
-            # =================================================
-
-            for arquivo_temp in [
-                arquivo_local,
-                locals().get("arquivo_shazam")
-            ]:
-
-                if arquivo_temp:
-
-                    try:
-
-                        if os.path.exists(
-                            arquivo_temp
-                        ):
-
-                            os.remove(
-                                arquivo_temp
-                            )
-
-                    except:
-                        pass
+            if arquivo_local:
+                try:
+                    if os.path.exists(arquivo_local):
+                        os.remove(arquivo_local)
+                except OSError:
+                    pass
 
     # =====================================================
     # -detectar audio
@@ -3348,34 +2128,22 @@ class Media(commands.Cog):
         self,
         ctx,
         *,
-        link: str = None
+        link: Optional[str] = None
     ):
-        await self.detectar_audio_prefix(
-            ctx,
-            link=link
-        )
+        await self.detectar_audio_prefix(ctx, link=link)
 
-    @detectar_prefix.command(
-        name="audio"
-    )
+    @detectar_prefix.command(name="audio")
     async def detectar_audio_prefix(
         self,
         ctx,
         *,
-        link: str = None
+        link: Optional[str] = None
     ):
-        arquivo_local = None
-        status = None
+        arquivo_local: Optional[str] = None
+        status: Optional[discord.Message] = None
 
         try:
-            # =============================================
-            # ANEXO: ÁUDIO OU VÍDEO
-            # =============================================
-
-                        # =============================================
             # PROCURAR ANEXO NA MENSAGEM ATUAL OU ANTERIOR
-            # =============================================
-
             anexo = await self.procurar_anexo_video(ctx)
 
             if anexo:
@@ -3386,7 +2154,7 @@ class Media(commands.Cog):
                     f"shazam_{random.randint(100000, 999999)}_{nome}"
                 )
 
-                await anexo.save(arquivo_local)
+                await anexo.save(Path(arquivo_local))
 
                 print(f"[Shazam] Anexo recebido: {anexo.filename}")
 
@@ -3406,9 +2174,7 @@ class Media(commands.Cog):
                 url = extrair_url(link)
 
                 if not url:
-                    await ctx.send(
-                        "❌ Não encontrei um link válido."
-                    )
+                    await ctx.send("❌ Não encontrei um link válido.")
                     return
 
                 status = await ctx.send("⏳ Baixando o áudio...")
@@ -3427,119 +2193,31 @@ class Media(commands.Cog):
                         "❌ Não consegui baixar o áudio desse link."
                     )
                     return
-                
-            # =============================================
+
             # IDENTIFICAR MÚSICA
-            # =============================================
+            status = await ctx.send("🔎 Procurando a música...")
 
-            status = await ctx.send(
-                "🔎 Procurando a música..."
-            )
-
-            track = await self._detectar_track_confiavel(
-                arquivo_local
-            )
+            track = await self._detectar_track_confiavel(arquivo_local)
 
             if not track:
-                embed_erro = discord.Embed(
-                    title="🎵 Música não encontrada",
-                    description=(
-                        "Não consegui identificar a música com confiança.\n\n"
-                        "Tente enviar outro trecho do áudio ou vídeo."
-                    ),
-                    color=discord.Color.from_str("#6A00FF")
-                )
-
                 if status:
                     await status.edit(
                         content=None,
-                        embed=embed_erro
+                        embed=self._embed_nao_encontrada()
                     )
 
                     # Impede o finally de apagar o embed
                     status = None
                 else:
-                    await ctx.send(embed=embed_erro)
+                    await ctx.send(embed=self._embed_nao_encontrada())
 
                 return
-        
-            # =============================================
-            # DADOS DA MÚSICA
-            # =============================================
 
-            titulo = track.get("title", "Não encontrado")
-            artista = track.get("subtitle", "Não encontrado")
-            data = track.get("releasedate") or "Não encontrada"
+            if status:
+                await status.delete()
+                status = None
 
-            imagens = track.get("images", {})
-            capa = (
-                imagens.get("coverarthq")
-                or imagens.get("coverart")
-            )
-
-            album = "Não encontrado"
-            gravadora = "Não encontrada"
-
-            for section in track.get("sections", []):
-                for item in section.get("metadata", []):
-                    nome_item = item.get("title", "").lower()
-                    valor = item.get("text")
-
-                    if nome_item in ["album", "álbum"] and valor:
-                        album = valor
-
-                    elif nome_item in ["label", "gravadora"] and valor:
-                        gravadora = valor
-
-            embed = discord.Embed(
-                title="🎵 Música encontrada!",
-                description=(
-                    f"**{titulo}**\n"
-                    f"por **{artista}**"
-                ),
-                color=discord.Color.from_str("#6A00FF")
-            )
-
-            embed.add_field(
-                name="🎤 Artista",
-                value=artista,
-                inline=True
-            )
-
-            embed.add_field(
-                name="💿 Álbum",
-                value=album,
-                inline=True
-            )
-
-            embed.add_field(
-                name="📅 Data",
-                value=data,
-                inline=True
-            )
-
-            embed.add_field(
-                name="🏷️ Gravadora",
-                value=gravadora,
-                inline=True
-            )
-
-            if capa:
-                embed.set_thumbnail(url=capa)
-
-            link_shazam = track.get("share", {}).get("href")
-
-            if link_shazam:
-                embed.url = link_shazam
-
-            embed.set_footer(
-                text="Identificado pelo Shazam"
-            )
-
-            await status.delete()
-            status = None
-
-            await ctx.send(embed=embed)
+            await ctx.send(embed=self._montar_embed_musica(track))
 
         except Exception as e:
             print(f"[Shazam] Erro prefixo: {e}")
@@ -3552,7 +2230,7 @@ class Media(commands.Cog):
             if status:
                 try:
                     await status.delete()
-                except Exception:
+                except discord.HTTPException:
                     pass
 
             if arquivo_local:
@@ -3561,7 +2239,6 @@ class Media(commands.Cog):
                         os.remove(arquivo_local)
                 except OSError:
                     pass
-
 
     # =====================================================
     # SISTEMA DE MÚSICA - FILA E REPRODUÇÃO
@@ -3591,20 +2268,14 @@ class Media(commands.Cog):
             opcoes["ffmpeg_location"] = FFMPEG_PATH_REAL
 
         with yt_dlp.YoutubeDL(opcoes) as ydl:
-            info = ydl.extract_info(
-                video_url,
-                download=False
-            )
+            info = ydl.extract_info(video_url, download=False)
 
         if not info:
             raise RuntimeError("Não consegui abrir o vídeo.")
 
         if info.get("entries"):
             info = next(
-                (
-                    item for item in info["entries"]
-                    if item
-                ),
+                (item for item in info["entries"] if item),
                 None
             )
 
@@ -3621,9 +2292,7 @@ class Media(commands.Cog):
                 and formato.get("acodec") not in (None, "none")
             ]
 
-            formatos.sort(
-                key=lambda formato: formato.get("abr") or 0
-            )
+            formatos.sort(key=lambda formato: formato.get("abr") or 0)
 
             if formatos:
                 stream_url = formatos[-1]["url"]
@@ -3637,31 +2306,23 @@ class Media(commands.Cog):
         """Confere se o usuário está na call em que o bot está."""
 
         if not ctx.guild:
-            await ctx.send(
-                "❌ Esse comando só funciona dentro de um servidor."
-            )
+            await ctx.send("❌ Esse comando só funciona dentro de um servidor.")
             return None
 
         estado = getattr(ctx.author, "voice", None)
 
         if not estado or not estado.channel:
-            await ctx.send(
-                "❌ Entre na call primeiro."
-            )
+            await ctx.send("❌ Entre na call primeiro.")
             return None
 
         voice = ctx.guild.voice_client
 
         if not voice or not voice.is_connected():
-            await ctx.send(
-                "❌ O bot não está em uma call."
-            )
+            await ctx.send("❌ O bot não está em uma call.")
             return None
 
         if estado.channel != voice.channel:
-            await ctx.send(
-                "❌ Você precisa estar na mesma call que o bot."
-            )
+            await ctx.send("❌ Você precisa estar na mesma call que o bot.")
             return None
 
         return voice
@@ -3671,10 +2332,7 @@ class Media(commands.Cog):
 
         guild_id = guild.id
 
-        fila = self.music_queues.setdefault(
-            guild_id,
-            asyncio.Queue()
-        )
+        fila = self.music_queues.setdefault(guild_id, asyncio.Queue())
 
         while True:
             musica = await fila.get()
@@ -3724,10 +2382,7 @@ class Media(commands.Cog):
 
                     loop.call_soon_threadsafe(resolver)
 
-                voice.play(
-                    fonte,
-                    after=depois_de_tocar
-                )
+                voice.play(fonte, after=depois_de_tocar)
 
                 try:
                     await musica["canal"].send(
@@ -3740,14 +2395,10 @@ class Media(commands.Cog):
                 erro = await terminou
 
                 if erro:
-                    print(
-                        f"[Música] Erro ao reproduzir: {erro}"
-                    )
+                    print(f"[Música] Erro ao reproduzir: {erro}")
 
             except Exception as erro:
-                print(
-                    f"[Música] Erro na fila: {erro}"
-                )
+                print(f"[Música] Erro na fila: {erro}")
 
                 try:
                     await musica["canal"].send(
@@ -3770,35 +2421,27 @@ class Media(commands.Cog):
     # =====================================================
 
     @commands.command(name="play.m")
-    async def play_m(self, ctx, *, pesquisa: str = None):
+    async def play_m(self, ctx, *, pesquisa: Optional[str] = None):
 
         if not ctx.guild:
             return
 
         if not pesquisa:
-            await ctx.send(
-                "❌ Use: `-play.m nome da música`"
-            )
+            await ctx.send("❌ Use: `-play.m nome da música`")
             return
 
         estado = getattr(ctx.author, "voice", None)
 
         if not estado or not estado.channel:
-            await ctx.send(
-                "❌ Entre na call primeiro."
-            )
+            await ctx.send("❌ Entre na call primeiro.")
             return
 
-        await ctx.send(
-            "🔎 Procurando a música no YouTube..."
-        )
+        await ctx.send("🔎 Procurando a música no YouTube...")
 
         resultados = await pesquisar_youtube(pesquisa)
 
         if not resultados:
-            await ctx.send(
-                "❌ Não encontrei essa música no YouTube."
-            )
+            await ctx.send("❌ Não encontrei essa música no YouTube.")
             return
 
         item = resultados[0]
@@ -3816,16 +2459,12 @@ class Media(commands.Cog):
 
         if voice:
             if voice.channel != estado.channel:
-                await ctx.send(
-                    "❌ Já estou tocando em outra call."
-                )
+                await ctx.send("❌ Já estou tocando em outra call.")
                 return
         else:
             try:
                 # O bot entra surdo para não ouvir os membros.
-                voice = await estado.channel.connect(
-                    self_deaf=True
-                )
+                voice = await estado.channel.connect(self_deaf=True)
 
             except Exception as erro:
                 print(f"[Música] Erro ao entrar na call: {erro}")
@@ -3836,10 +2475,7 @@ class Media(commands.Cog):
                 )
                 return
 
-        fila = self.music_queues.setdefault(
-            guild_id,
-            asyncio.Queue()
-        )
+        fila = self.music_queues.setdefault(guild_id, asyncio.Queue())
 
         musica = {
             "url": item["url"],
@@ -3879,22 +2515,16 @@ class Media(commands.Cog):
             return
 
         if voice.is_paused():
-            await ctx.send(
-                "⏸️ A música já está pausada."
-            )
+            await ctx.send("⏸️ A música já está pausada.")
             return
 
         if not voice.is_playing():
-            await ctx.send(
-                "❌ Não tem música tocando agora."
-            )
+            await ctx.send("❌ Não tem música tocando agora.")
             return
 
         voice.pause()
 
-        await ctx.send(
-            "⏸️ Música pausada!"
-        )
+        await ctx.send("⏸️ Música pausada!")
 
     # =====================================================
     # -UNPAUSE.M
@@ -3909,16 +2539,12 @@ class Media(commands.Cog):
             return
 
         if not voice.is_paused():
-            await ctx.send(
-                "❌ A música não está pausada."
-            )
+            await ctx.send("❌ A música não está pausada.")
             return
 
         voice.resume()
 
-        await ctx.send(
-            "▶️ Música retomada do mesmo ponto!"
-        )
+        await ctx.send("▶️ Música retomada do mesmo ponto!")
 
     # =====================================================
     # -SKIP.M
@@ -3935,12 +2561,8 @@ class Media(commands.Cog):
         guild_id = ctx.guild.id
         musica = self.music_current.get(guild_id)
 
-        if not musica or not (
-            voice.is_playing() or voice.is_paused()
-        ):
-            await ctx.send(
-                "❌ Não tem música tocando para pular."
-            )
+        if not musica or not (voice.is_playing() or voice.is_paused()):
+            await ctx.send("❌ Não tem música tocando para pular.")
             return
 
         # Quem pediu a música pode pular diretamente.
@@ -3949,9 +2571,7 @@ class Media(commands.Cog):
 
             voice.stop()
 
-            await ctx.send(
-                "⏭️ O autor pulou a música!"
-            )
+            await ctx.send("⏭️ O autor pulou a música!")
             return
 
         # Os votos só contam entre as pessoas da call.
@@ -3964,20 +2584,12 @@ class Media(commands.Cog):
         quantidade_pessoas = len(membros)
 
         # Exemplo: 5 pessoas na call = 4 votos necessários.
-        votos_necessarios = max(
-            1,
-            quantidade_pessoas - 1
-        )
+        votos_necessarios = max(1, quantidade_pessoas - 1)
 
-        votos = self.music_votes.setdefault(
-            guild_id,
-            set()
-        )
+        votos = self.music_votes.setdefault(guild_id, set())
 
         if ctx.author.id in votos:
-            await ctx.send(
-                "🗳️ Você já votou para pular essa música."
-            )
+            await ctx.send("🗳️ Você já votou para pular essa música.")
             return
 
         votos.add(ctx.author.id)
@@ -4014,17 +2626,13 @@ class Media(commands.Cog):
         voice = ctx.guild.voice_client
 
         if not voice or not voice.is_connected():
-            await ctx.send(
-                "❌ Não estou em nenhuma call."
-            )
+            await ctx.send("❌ Não estou em nenhuma call.")
             return
 
         estado = getattr(ctx.author, "voice", None)
 
         if not estado or estado.channel != voice.channel:
-            await ctx.send(
-                "❌ Você precisa estar na mesma call que eu."
-            )
+            await ctx.send("❌ Você precisa estar na mesma call que eu.")
             return
 
         guild_id = ctx.guild.id
@@ -4044,9 +2652,7 @@ class Media(commands.Cog):
             except asyncio.CancelledError:
                 pass
             except Exception as erro:
-                print(
-                    f"[Música] Erro ao encerrar a fila: {erro}"
-                )
+                print(f"[Música] Erro ao encerrar a fila: {erro}")
 
         # Limpa as músicas que ainda estavam na fila
         fila = self.music_queues.get(guild_id)
@@ -4069,31 +2675,20 @@ class Media(commands.Cog):
         try:
             await voice.disconnect(force=True)
 
-            await ctx.send(
-                "👋 Saí da call e limpei a fila de músicas!"
-            )
+            await ctx.send("👋 Saí da call e limpei a fila de músicas!")
 
         except Exception as erro:
-            print(
-                f"[Música] Erro ao sair da call: {erro}"
-            )
+            print(f"[Música] Erro ao sair da call: {erro}")
 
-            await ctx.send(
-                "❌ Não consegui sair da call."
-            )
+            await ctx.send("❌ Não consegui sair da call.")
+
 
 # =========================================================
 # SETUP
 # =========================================================
 
-async def setup(
-    bot
-):
+async def setup(bot):
 
-    await bot.add_cog(
-        Media(bot)
-    )
+    await bot.add_cog(Media(bot))
 
-    print(
-        "Cog carregado: media.py"
-    )
+    print("Cog carregado: media.py")
