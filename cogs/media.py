@@ -2,6 +2,8 @@ import discord
 import aiohttp
 from discord.ext import commands
 from discord import app_commands
+from pathlib import Path
+from typing import Optional
 
 import yt_dlp
 
